@@ -1,0 +1,88 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url = env("DATABASE_URL") // Transaction pooler :6543
+  directUrl = env("DIRECT_URL") // Direct :5432 for migrations
+}
+
+enum LogStatus {
+  Open
+  In_Progress @map("In Progress")
+  Closed
+
+  @@map("LogStatus")
+}
+
+enum AppointmentType {
+  Meeting
+  Call
+  Visit
+  Personal
+  Other
+
+  @@map("AppointmentType")
+}
+
+model Practice {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  created_at DateTime? @default(now()) @db.Timestamptz(6)
+  practice_name String
+  contact_person String?
+  phone String?
+  mobile String?
+  email String?
+  address String?
+  product String? @default("Optom Suite")
+  notes String?
+
+  logs Log[]
+
+  @@map("practices")
+}
+
+model Log {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  created_at DateTime? @default(now()) @db.Timestamptz(6)
+  practice_id String? @db.Uuid
+  practice Practice? @relation(fields: [practice_id], references: [id], onDelete: SetNull)
+  practice_name String?
+  contact_person String?
+  phone String?
+  product String? @default("Optom Suite")
+  issue String?
+  solution String?
+  notes String?
+  status LogStatus @default(Open)
+
+  @@map("logs")
+  @@index([practice_id])
+  @@index([status])
+}
+
+model Todo {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  created_at DateTime? @default(now()) @db.Timestamptz(6)
+  text String
+  done Boolean @default(false)
+
+  @@map("todos")
+}
+
+model Appointment {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  created_at DateTime? @default(now()) @db.Timestamptz(6)
+  title String
+  description String?
+  date DateTime @db.Date
+  start_time String @default("09:00")
+  end_time String @default("10:00")
+  type AppointmentType @default(Meeting)
+  location String?
+  practice_name String?
+
+  @@map("appointments")
+  @@index([date])
+}

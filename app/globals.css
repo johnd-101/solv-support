@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background: #fafafb;
+  color: #18181b;
+  overscroll-behavior: none;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+button, a { cursor: pointer; }
