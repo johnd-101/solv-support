@@ -43,7 +43,7 @@ function apptTypeStyle(t: string) {
   if (t==='Visit') return { bg:'#dcfce7', color:'#15803d', border:'#bbf7d0', dot:'#22c55e' }
   if (t==='Call') return { bg:'#fef3c7', color:'#92400e', border:'#fde68a', dot:'#f59e0b' }
   if (t==='Personal') return { bg:'#e0f2fe', color:'#0c4a6e', border:'#bae6fd', dot:'#0ea5e9' }
-  return { bg:'#f1f5f9', color:'#475569', border:'#e2e8f0', dot:'#64748b' }
+  return { bg:'#f1f5f9', color:'#670bdf', border:'#e2e8f0', dot:'#1864ce' }
 }
 
 export default function Page() {
@@ -152,19 +152,47 @@ export default function Page() {
     return map
   }, [logs])
 
-  const calendarGrid = useMemo(()=>{
-    const y=calendarDate.getFullYear(), m=calendarDate.getMonth()
-    const first = new Date(y,m,1)
-    const startDay = (first.getDay()+6)%7
-    const daysInMonth = new Date(y,m+1,0).getDate()
-    const cells: { date: Date | null, dateStr: string | null, isCurrentMonth: boolean }[] = []
-    for(let i=0;i<startDay;i++) cells.push({date:null, dateStr:null, isCurrentMonth:false})
-    for(let d=1; d<=daysInMonth; d++){ const dt = new Date(y,m,d); cells.push({date:dt, dateStr: dt.toISOString().split('T')[0], isCurrentMonth:true}) }
-    while(cells.length%7!==0) cells.push({date:null, dateStr:null, isCurrentMonth:false})
-    return cells
-  }, [calendarDate])
-  const getApptsForDate = (dateStr: string) => appointments.filter(a=>a.date===dateStr).sort((a,b)=>a.start_time.localeCompare(b.start_time))
-  const upcomingAppts = useMemo(()=> [...appointments].filter(a=>a.date>=new Date().toISOString().split('T')[0]).sort((a,b)=> (a.date+a.start_time).localeCompare(b.date+b.start_time)).slice(0,8), [appointments])
+  // helper - always use local date, ignore AM/PM/timezone
+const toLocalDateStr = (d: Date) => {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+// also normalizes if your appointment.date comes as "2026-05-15T00:00:00Z" or with time
+const normalizeDateStr = (s: string) => s.slice(0, 10)
+
+const calendarGrid = useMemo(() => {
+  const y = calendarDate.getFullYear(), m = calendarDate.getMonth()
+  const first = new Date(y, m, 1)
+  const startDay = (first.getDay() + 6) % 7 // Monday start
+  const daysInMonth = new Date(y, m + 1, 0).getDate()
+  const cells: { date: Date | null, dateStr: string | null, isCurrentMonth: boolean }[] = []
+
+  for (let i = 0; i < startDay; i++) cells.push({ date: null, dateStr: null, isCurrentMonth: false })
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dt = new Date(y, m, d) // local midnight
+    cells.push({ date: dt, dateStr: toLocalDateStr(dt), isCurrentMonth: true })
+  }
+
+  while (cells.length % 7!== 0) cells.push({ date: null, dateStr: null, isCurrentMonth: false })
+  return cells
+}, [calendarDate])
+
+const getApptsForDate = (dateStr: string) =>
+  appointments
+   .filter(a => normalizeDateStr(a.date) === dateStr)
+   .sort((a,b) => a.start_time.localeCompare(b.start_time))
+
+const upcomingAppts = useMemo(() => {
+  const todayStr = toLocalDateStr(new Date()) // local today, not UTC today
+  return [...appointments]
+   .filter(a => normalizeDateStr(a.date) >= todayStr)
+   .sort((a,b) => (normalizeDateStr(a.date) + a.start_time).localeCompare(normalizeDateStr(b.date) + b.start_time))
+   .slice(0, 8)
+}, [appointments])
 
   async function savePractice() {
     if (!pForm.practice_name) { setToast('Practice Name required'); return }
