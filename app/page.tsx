@@ -484,7 +484,7 @@ export default function Page() {
         <div className="relative mx-auto w-full max-w-6xl px-4 sm:px-6 h-14 sm:h-16 flex items-center gap-2.5 sm:gap-3">
           <div className="flex items-center gap-2.5 min-w-0">
             {!logoError? <div className="p-[1.5px] rounded-full bg-gradient-to-br from-blue-500 to-sky-600 shrink-0"><img src={LOGO_PATH} alt="Logo" onError={()=>setLogoError(true)} className="h-8 w-8 rounded-full object-contain bg-white p-1" /></div> : <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-600 to-sky-600 flex items-center justify-center text-white shadow-lg shrink-0">👁</div>}
-            <div className="font-black tracking-tight text-sm bg-gradient-to-r from-blue-700 to-sky-700 dark:from-blue-300 dark:to-sky-300 bg-clip-text text-transparent">SOLV</div>
+            <div className="font-black tracking-tight text-sm bg-gradient-to-r from-blue-700 to-sky-700 dark:from-blue-300 dark:to-sky-300 bg-clip-text text-transparent">SOLVMEDICAL</div>
             <div className={`hidden lg:flex ml-2 text-xs font-bold px-3 py-1 rounded-full border truncate ${theme==='dark'? 'bg-slate-800/80 border-slate-700/50 text-slate-300' : 'bg-white/80 border-blue-200/50 text-slate-600 shadow-sm'}`}>{loading?'Loading…':`${practices.length} • ${logs.length} • ${appointments.length}`}</div>
           </div>
           <div className="ml-auto flex items-center gap-2 shrink-0">
