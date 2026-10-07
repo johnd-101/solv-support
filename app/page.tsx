@@ -4,6 +4,7 @@
   Stack: Next.js (client component) + Supabase + Tailwind
   TABS: logs | practices | todos | calendar | kpi
   UPDATE: Practice_number + Logs autofill practice_number (greyed out) not practice_name
+  UPDATE 2: Todo timestamp + Calendar square blocks + smaller labels + KPI comments
 */
 
 import { useState, useEffect, useMemo } from 'react'
@@ -30,7 +31,7 @@ type LogRow = {
   created_at: string;
   practice_id: string | null;
   practice_name: string;
-  practice_number?: string; // NEW - linked number
+  practice_number?: string;
   contact_person: string;
   phone: string;
   product: string;
@@ -81,6 +82,7 @@ function apptTypeStyle(t: string) {
   return { bg:'#f1f5f9', color:'#670bdf', border:'#e2e8f0', dot:'#1864ce' }
 }
 
+// Shows timestamp for each todo - when it was created
 function formatTodoTimestamp(iso: string) {
   try {
     return new Date(iso).toLocaleString('en-ZA', {
@@ -188,7 +190,7 @@ export default function Page() {
 
   const filteredPractices = useMemo(()=> practices.filter(p=>
     (p.practice_name+' '+(p.practice_number||'')+' '+p.contact_person+' '+p.phone+' '+p.email+' '+p.product)
-  .toLowerCase().includes(search.toLowerCase())
+ .toLowerCase().includes(search.toLowerCase())
   ), [practices, search])
 
   const filteredTodos = useMemo(()=>{
@@ -238,7 +240,7 @@ export default function Page() {
   async function savePractice() {
     if (!pForm.practice_name) { setToast('Practice Name required'); return }
     const cleanedForm = {
-    ...pForm,
+   ...pForm,
       product: normalizeProduct(pForm.product),
       practice_number: (pForm.practice_number || '').trim()
     }
@@ -262,7 +264,6 @@ export default function Page() {
     return true
   }
 
-  // UPDATED: saveLog now uses practice_number autofill, validates practice_id
   async function saveLog() {
     if (!lForm.practice_id ||!lForm.issue) { setToast('Select Practice + Issue required'); return }
     const linkedPractice = practices.find(p => p.id === lForm.practice_id)
@@ -284,7 +285,6 @@ export default function Page() {
       setLogs(logs.map(x=>x.id===editingLog.id? data as any : x))
     } else {
       const { error, data } = await supabase.from('logs').insert(payload).select().single()
-      // If you haven't added practice_number column to logs yet, fallback without it
       if(error){
         if(error.message.includes('practice_number')){
           const { practice_number,...fallback } = payload as any
@@ -301,7 +301,6 @@ export default function Page() {
     setShowLog(false); setShowDetailLog(null); setToast('Log saved')
   }
 
-  // UPDATED: autofill practice_number (greyed out) not just practice_name
   function handlePracticeSelectForLog(practiceId: string) {
     if (!practiceId) {
       setLForm({...lForm, practice_id: '', practice_name: '', practice_number: '', contact_person: '', phone: '', product: 'Solv Optics'})
@@ -310,7 +309,7 @@ export default function Page() {
     const p = practices.find(x=>x.id===practiceId)
     if (p) {
       setLForm({
-       ...lForm,
+      ...lForm,
         practice_id: p.id,
         practice_name: p.practice_name,
         practice_number: p.practice_number || '',
@@ -361,6 +360,17 @@ export default function Page() {
     setToast('To-Do updated')
   }
 
+  // ================= KPI REPORT EXPLAINED =================
+  // This KPI dashboard is your business overview:
+  // - Top cards: total counts for PRACTICES, TOTAL LOGS, OPEN LOGS (needs action), TODOS LEFT
+  // - Logs by Status: % of Open vs In Progress vs Closed = workload and completion rate
+  // - Logs by Product: which product line (Optics/Physio/Meds/Dental) creates most tickets
+  // - Practices by Product: how many practices you have per product
+  // - Top Practices by Logs: top 5 practices with most issues = high-maintenance clients
+  // - Logs Last 6 Months: support trend over time (is support increasing?)
+  // - Appointments Last 6 Months: field visit/meeting trend
+  // - Appointments by Type: Meeting / Visit / Call / Personal / Other breakdown
+  // - Appts this month + To-Do done/left: short-term activity
   const kpi = useMemo(()=>{
     const open = logs.filter(l=>l.status==='Open').length
     const prog = logs.filter(l=>l.status==='In Progress').length
@@ -557,8 +567,9 @@ export default function Page() {
                     ) : (
                       <div className="cursor-pointer" onClick={()=>toggleTodo(t.id)}>
                         <div className={`text-sm font-medium leading-snug ${t.done?'line-through text-slate-400':''}`}>{t.text}</div>
-                        <div className="text- font-bold tracking-widest uppercase text-slate-400 mt-1 flex items-center gap-1.5">
-                          <span>🕒</span> {formatTodoTimestamp(t.created_at)}
+                        {/* TIMESTAMP - shows when todo was created */}
+                        <div className="text- font-bold tracking-widest uppercase text-slate-400 mt-1.5 flex items-center gap-1.5">
+                          <span className="text-">🕒</span> {formatTodoTimestamp(t.created_at)}
                         </div>
                       </div>
                     )}
@@ -585,8 +596,10 @@ export default function Page() {
                 </div>
                 <div className="flex gap-2"><button onClick={()=>{ setCalendarDate(new Date()); setSelectedCalDate(todayLocalStr) }} className={`h-10 px-4 rounded-xl text-sm font-bold border ${theme==='dark'? 'bg-slate-800 border-slate-700' : 'bg-white border-blue-100'}`}>Today</button><button onClick={()=>{ setAForm({...EMPTY_APPT, date: selectedCalDate || todayLocalStr}); setEditingAppt(null); setShowAppt(true) }} className="h-10 px-5 rounded-xl bg-gradient-to-r from-blue-600 to-sky-500 text-white text-sm font-bold shadow">+ Appointment</button></div>
               </div>
-              <div className={`grid grid-cols-7 border-b text-xs font-bold ${theme==='dark'? 'bg-slate-800/50 border-slate-800 text-slate-400' : 'bg-blue-50/60 border-blue-50 text-slate-500'}`}>{['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d=><div key={d} className="p-2.5 text-center">{d}</div>)}</div>
-              <div className="grid grid-cols-7">
+              <div className={`grid grid-cols-7 border-b text- font-bold ${theme==='dark'? 'bg-slate-800/50 border-slate-800 text-slate-400' : 'bg-blue-50/60 border-blue-50 text-slate-500'}`}>{['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d=><div key={d} className="p-2.5 text-center">{d}</div>)}</div>
+
+              {/* SQUARE CALENDAR GRID - each cell is aspect-square */}
+              <div className="grid grid-cols-7 gap-px bg-blue-100 dark:bg-slate-800">
                 {calendarGrid.map((cell,i)=>{
                   const isToday = cell.dateStr===todayLocalStr
                   const isSelected = cell.dateStr && cell.dateStr===selectedCalDate
@@ -603,21 +616,30 @@ export default function Page() {
                           setShowAppt(true)
                         }
                       }}
-                      className={`border-b border-r p-1.5 min-h- sm:min-h- relative cursor-pointer transition
-                      ${!cell.isCurrentMonth? 'bg-slate-50/60 text-slate-300' : 'bg-white/70 hover:bg-blue-50/80'}
-                      ${isSelected? '!bg-blue-100/80 ring-2 ring-inset ring-blue-400' : ''}
-                      ${theme==='dark'? 'border-slate-800!bg-slate-900/40 hover:!bg-slate-800' : 'border-blue-50'}`}
+                      className={`
+                        aspect-square p-1 sm:p-1.5 flex flex-col relative cursor-pointer transition
+                        ${!cell.isCurrentMonth? 'bg-slate-100 dark:bg-slate-900/20 text-slate-300' : theme==='dark'? 'bg-slate-900 hover:bg-slate-800' : 'bg-white hover:bg-blue-50/80'}
+                        ${isSelected? '!bg-blue-100/90 ring-2 ring-inset ring-blue-400 z-10' : ''}
+                      `}
                     >
                       {cell.date && <>
-                        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${isToday? 'bg-blue-600 text-white' : ''} ${isSelected &&!isToday? 'bg-slate-900 text-white dark:bg-white dark:text-black' : ''}`}>{cell.date.getDate()}</div>
-                        <div className="mt-1.5 space-y-1 hidden sm:block">
-                          {appts.slice(0,2).map(a=>{
-                            const ts=apptTypeStyle(a.type)
-                            return <div key={a.id} onClick={(e)=>{ e.stopPropagation(); setShowDetailAppt(a) }} className="truncate text- font-bold px-2 py-1 rounded-full hover:opacity-80" style={{background:ts.bg, color:ts.color}}>{a.start_time} {a.title}</div>
-                          })}
-                          {appts.length>2&&<div className="text- text-slate-500 px-1">+{appts.length-2} more</div>}
+                        <div className="flex justify-between items-start">
+                          <div className={`w-6 h-6 sm:w-7 sm:h-7 rounded-full flex items-center justify-center text- sm:text-xs font-bold
+                            ${isToday? 'bg-blue-600 text-white shadow' : ''}
+                            ${isSelected &&!isToday? 'bg-slate-900 text-white dark:bg-white dark:text-black' : 'text-slate-700 dark:text-slate-300'}`}>
+                            {cell.date.getDate()}
+                          </div>
+                          {appts.length>0 && <div className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1 hidden sm:block"></div>}
                         </div>
-                        {appts.length>0 && <div className="sm:hidden mt-1 flex gap-0.5"><div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>{appts.length>1&&<div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>}</div>}
+                        {/* SMALLER APPOINTMENT LABELS */}
+                        <div className="mt-1 flex-1 flex flex-col gap-0.5 overflow-hidden hidden sm:flex">
+                          {appts.slice(0,3).map(a=>{
+                            const ts=apptTypeStyle(a.type)
+                            return <div key={a.id} onClick={(e)=>{ e.stopPropagation(); setShowDetailAppt(a) }} className="truncate text- leading-[1.1] font-bold px-1.5 py-0.5 rounded-md hover:opacity-80" style={{background:ts.bg, color:ts.color, border:`1px solid ${ts.border}`}}>{a.start_time.slice(0,5)} {a.title}</div>
+                          })}
+                          {appts.length>3&&<div className="text- font-bold text-slate-500 px-1">+{appts.length-3} more</div>}
+                        </div>
+                        {appts.length>0 && <div className="sm:hidden mt-auto flex gap-0.5"><div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>{appts.length>1&&<div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>}</div>}
                       </>}
                     </div>
                   )
@@ -632,7 +654,7 @@ export default function Page() {
                   <button onClick={()=>setSelectedCalDate(null)} className={`w-8 h-8 rounded-full text-xs ${theme==='dark'? 'bg-slate-800' : 'bg-slate-100'}`}>✕</button>
                 </div>
                 <div className="space-y-2">
-                  {selectedDayAppts.length===0? <div className="text-sm text-slate-400 py-4">No appointments. Click to add one.</div> :
+                  {selectedDayAppts.length===0? <div className="text-sm text-slate-400 py-4">No appointments.</div> :
                   selectedDayAppts.map(a=>{ const st=apptTypeStyle(a.type); return <div key={a.id} onClick={()=>setShowDetailAppt(a)} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer ${theme==='dark'? 'border-slate-800 hover:bg-slate-800' : 'border-blue-50 hover:bg-blue-50'}`}><div className="w-11 h-11 rounded-xl flex flex-col items-center justify-center text- font-bold" style={{background:st.bg, color:st.color}}><span className="text-sm leading-none">{a.start_time}</span></div><div className="flex-1 min-w-0"><div className="font-bold text-sm truncate">{a.title}</div><div className="text-xs text-slate-500 truncate">{a.start_time}-{a.end_time} • {a.type}</div></div><span style={{background:st.bg, color:st.color, borderColor:st.border}} className="text-xs font-bold px-3 py-1 rounded-full border">{a.type}</span></div>})}
                 </div>
               </div>
@@ -645,20 +667,33 @@ export default function Page() {
           </div>
         )}
 
+        {/* ================= KPI TAB WITH CLEAR COMMENTS ================= */}
         {tab==='kpi' && (
           <div className="space-y-5">
+            {/* KPI HEADER EXPLANATION */}
+            <div className={`rounded-2xl border p-4 ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-blue-50/80 border-blue-100'}`}>
+              <h2 className="font-black text-sm tracking-tight">KPI REPORT - What is this?</h2>
+              <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                KPI = Key Performance Indicators. This dashboard shows your support & sales performance at a glance:
+                Open issues that need fixing, which products cause most logs, which practices need attention, and monthly trends.
+              </p>
+            </div>
+
+            {/* TOP SUMMARY CARDS */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {[
-                {l:'PRACTICES', v:practices.length, g:'from-blue-600 to-sky-500'},
-                {l:'TOTAL LOGS', v:kpi.totalLogs, g:'from-blue-600 to-cyan-500'},
-                {l:'OPEN LOGS', v:kpi.open, g:'from-amber-500 to-orange-500'},
-                {l:'TODOS LEFT', v:kpi.todoActive, g:'from-sky-500 to-blue-500'},
-              ].map(card=> <div key={card.l} className={`rounded-2xl border p-[1.5px] shadow-sm ${theme==='dark'? 'border-slate-800' : 'border-blue-100'}`}><div className={`rounded- p-4 h-full ${theme==='dark'? 'bg-slate-900' : 'bg-white'}`}><div className="text- font-bold tracking-widest text-slate-500">{card.l}</div><div className={`text-2xl font-black mt-1 bg-gradient-to-r ${card.g} bg-clip-text text-transparent`}>{card.v}</div></div></div>)}
+                {l:'PRACTICES', v:practices.length, g:'from-blue-600 to-sky-500', desc:'Total practices registered'},
+                {l:'TOTAL LOGS', v:kpi.totalLogs, g:'from-blue-600 to-cyan-500', desc:'All support logs ever'},
+                {l:'OPEN LOGS', v:kpi.open, g:'from-amber-500 to-orange-500', desc:'Needs action now'},
+                {l:'TODOS LEFT', v:kpi.todoActive, g:'from-sky-500 to-blue-500', desc:'Pending tasks'},
+              ].map(card=> <div key={card.l} className={`rounded-2xl border p-[1.5px] shadow-sm ${theme==='dark'? 'border-slate-800' : 'border-blue-100'}`}><div className={`rounded- p-4 h-full ${theme==='dark'? 'bg-slate-900' : 'bg-white'}`}><div className="text- font-bold tracking-widest text-slate-500">{card.l}</div><div className={`text-2xl font-black mt-1 bg-gradient-to-r ${card.g} bg-clip-text text-transparent`}>{card.v}</div><div className="text- text-slate-400 mt-1">{card.desc}</div></div></div>)}
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              {/* Logs by Status = Workload health */}
               <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
-                <h3 className="font-bold text-sm mb-4">Logs by Status</h3>
+                <h3 className="font-bold text-sm mb-1">Logs by Status</h3>
+                <p className="text- text-slate-400 mb-4">Health check: Open = to-do, In Progress = working, Closed = done</p>
                 <div className="space-y-3">
                   {[
                     {label:'Open', count:kpi.open, color:'#3b82f6'},
@@ -683,8 +718,10 @@ export default function Page() {
                 </div>
               </div>
 
+              {/* Logs by Product = Which product has most issues */}
               <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
-                <h3 className="font-bold text-sm mb-4">Logs by Product</h3>
+                <h3 className="font-bold text-sm mb-1">Logs by Product</h3>
+                <p className="text- text-slate-400 mb-4">Which product line generates most support tickets</p>
                 <div className="space-y-2.5">
                   {kpi.byProduct.map(p=>{
                     const pct = kpi.totalLogs? Math.round(p.count/kpi.totalLogs*100):0
@@ -702,8 +739,10 @@ export default function Page() {
                 </div>
               </div>
 
+              {/* Practices by Product + Top clients */}
               <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
-                <h3 className="font-bold text-sm mb-4">Practices by Product</h3>
+                <h3 className="font-bold text-sm mb-1">Practices by Product</h3>
+                <p className="text- text-slate-400 mb-4">Client distribution per product</p>
                 <div className="space-y-2.5">
                   {kpi.practicesByProduct.map(p=>(
                     <div key={p.product} className="flex items-center gap-3">
@@ -714,7 +753,7 @@ export default function Page() {
                   ))}
                 </div>
                 <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
-                  <h4 className="text- font-bold tracking-widest text-slate-400 mb-2">TOP PRACTICES BY LOGS</h4>
+                  <h4 className="text- font-bold tracking-widest text-slate-400 mb-2">TOP PRACTICES BY LOGS - High maintenance clients</h4>
                   <div className="space-y-1.5">
                     {kpi.byPracticeTop.map(tp=>(
                       <div key={tp.name} className="flex justify-between text-xs"><span className="truncate font-medium">{tp.name}</span><span className="font-black ml-2">{tp.count}</span></div>
@@ -726,9 +765,10 @@ export default function Page() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* 6-month log trend */}
               <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
                 <h3 className="font-bold text-sm mb-1">Logs - Last 6 Months</h3>
-                <p className="text- text-slate-400 mb-4 tracking-widest font-bold uppercase">Created_at monthly count</p>
+                <p className="text- text-slate-400 mb-4 tracking-widest font-bold uppercase">Support trend - increasing or decreasing?</p>
                 <div className="flex items-end gap-2 h-32">
                   {kpi.logsByMonth.map(m=>{
                     const h = Math.round(m.count/kpi.maxLogsMonth*100)
@@ -743,9 +783,10 @@ export default function Page() {
                 </div>
               </div>
 
+              {/* 6-month appointment trend */}
               <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
                 <h3 className="font-bold text-sm mb-1">Appointments - Last 6 Months</h3>
-                <p className="text- text-slate-400 mb-4 tracking-widest font-bold uppercase">By appointment date</p>
+                <p className="text- text-slate-400 mb-4 tracking-widest font-bold uppercase">Field activity trend</p>
                 <div className="flex items-end gap-2 h-32">
                   {kpi.apptsByMonth.map(m=>{
                     const h = Math.round(m.count/kpi.maxApptsMonth*100)
@@ -761,8 +802,10 @@ export default function Page() {
               </div>
             </div>
 
+            {/* Appointments by Type */}
             <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
-              <h3 className="font-bold text-sm mb-4">Appointments by Type</h3>
+              <h3 className="font-bold text-sm mb-1">Appointments by Type</h3>
+              <p className="text- text-slate-400 mb-4">Breakdown of Meeting / Visit / Call / Personal / Other</p>
               <div className="flex flex-wrap gap-2">
                 {kpi.byType.map(t=>{
                   const st = apptTypeStyle(t.type)
@@ -790,6 +833,7 @@ export default function Page() {
         </div>
       </nav>
 
+      {/* Modals */}
       {showDetailPractice && (
         <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-slate-900/40 backdrop-blur-sm p-0 sm:p-4">
           <div className="w-full max-w-lg rounded-t-3xl sm:rounded-2xl p-[1.5px] shadow-2xl overflow-hidden">
@@ -865,7 +909,6 @@ export default function Page() {
         </div>
       )}
 
-      {/* UPDATED LOG MODAL - Practice Number greyed out */}
       {showLog && (
         <div className="fixed inset-0 z-[110] flex items-end sm:items-center justify-center bg-slate-900/40 backdrop-blur-sm p-0 sm:p-4">
           <div className={`w-full max-w-lg rounded-t-3xl sm:rounded-2xl p-6 shadow-2xl border max-h- overflow-y-auto ${theme==='dark'? 'bg-slate-900 border-slate-800' : 'bg-white'}`}>
@@ -876,26 +919,10 @@ export default function Page() {
                 <option value="">-- Select Practice --</option>
                 {practices.map(p=> <option key={p.id} value={p.id}>{p.practice_number? `#${p.practice_number} - ` : ''}{p.practice_name} ({p.product})</option>)}
               </select>
-
-              {/* NEW: Practice Number autofill - greyed out */}
               <div>
                 <label className="text- font-bold uppercase tracking-widest text-slate-500">Practice Number</label>
-                <input
-                  value={lForm.practice_number || ''}
-                  disabled
-                  readOnly
-                  placeholder="Select practice to auto-fill number"
-                  className={`h-11 w-full rounded-xl border px-4 text-sm font-black cursor-not-allowed mt-1
-                    ${theme==='dark'? 'bg-slate-800 border-slate-700 text-slate-400' : 'bg-slate-100 border-slate-200 text-slate-500'}`}
-                />
-                {lForm.practice_name && (
-                  <div className="text- text-slate-500 mt-1.5 flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
-                    Linked to: <span className="font-bold text-slate-700 dark:text-slate-300">{lForm.practice_name}</span>
-                  </div>
-                )}
+                <input value={lForm.practice_number || ''} disabled readOnly placeholder="Select practice to auto-fill number" className={`h-11 w-full rounded-xl border px-4 text-sm font-black cursor-not-allowed mt-1 ${theme==='dark'? 'bg-slate-800 border-slate-700 text-slate-400' : 'bg-slate-100 border-slate-200 text-slate-500'}`} />
               </div>
-
               <div className="grid grid-cols-2 gap-3">
                 <select value={lForm.product} onChange={e=>setLForm({...lForm, product: e.target.value})} className={`h-11 rounded-xl border px-3 text-sm ${theme==='dark'? 'bg-slate-800 border-slate-700' : 'bg-white border-blue-200'}`}><option>Solv Optics</option><option>Solv Physio</option><option>Solv Meds</option><option>Solv Dental</option></select>
                 <select value={lForm.status} onChange={e=>setLForm({...lForm, status: e.target.value})} className={`h-11 rounded-xl border px-3 text-sm ${theme==='dark'? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}><option>Open</option><option>In Progress</option><option>Closed</option></select>
