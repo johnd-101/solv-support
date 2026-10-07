@@ -1,37 +1,47 @@
-
 'use client'
 /*
-
   SOLV CRM - Main Page
   Stack: Next.js (client component) + Supabase + Tailwind
   TABS: logs | practices | todos | calendar | kpi
-
-  This file is the entire app:
-    - Auth gate with password + lockout
-    - 5 Tabs: Support Logs, Client Practices, To-Do (with timestamp), Calendar, KPI Dashboard
-    - All CRUD talks directly to Supabase tables
+  UPDATE: Practice_number + Logs autofill practice_number (greyed out) not practice_name
 */
 
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 
-// ================= CONFIG & ASSETS =================
-// LOGO_PATH: where the logo image lives in /public folder. Used in header + login screen.
 const LOGO_PATH = "/solv-logo-blue.png"
 
 // ================= TYPES =================
-// Practice: client practice row in Supabase 'practices' table
-// LogRow: support ticket row in 'logs' table - linked to a practice via practice_id
-// Todo: to-do item - created_at is used as the visible timestamp
-// Appointment: calendar appointment - date is YYYY-MM-DD string, type used for color coding
-type Practice = { id: string; created_at: string; practice_name: string; contact_person: string; phone: string; mobile: string; email: string; address: string; product: string; notes: string }
-type LogRow = { id: string; created_at: string; practice_id: string | null; practice_name: string; contact_person: string; phone: string; product: string; issue: string; solution: string; notes: string; status: string }
+type Practice = {
+  id: string;
+  created_at: string;
+  practice_name: string;
+  practice_number: string;
+  contact_person: string;
+  phone: string;
+  mobile: string;
+  email: string;
+  address: string;
+  product: string;
+  notes: string
+}
+type LogRow = {
+  id: string;
+  created_at: string;
+  practice_id: string | null;
+  practice_name: string;
+  practice_number?: string; // NEW - linked number
+  contact_person: string;
+  phone: string;
+  product: string;
+  issue: string;
+  solution: string;
+  notes: string;
+  status: string
+}
 type Todo = { id: string; text: string; done: boolean; created_at: string }
 type Appointment = { id: string; created_at: string; title: string; description: string; date: string; start_time: string; end_time: string; type: 'Meeting'|'Call'|'Visit'|'Personal'|'Other'; location: string; practice_name?: string }
 
-// ================= PRODUCT CONFIG =================
-// PRODUCT_OPTIONS: the 4 clean product names we allow
-// PRODUCT_COLORS: used for badges, dots, and KPI charts - keeps colors consistent
 const PRODUCT_OPTIONS = [ 'Solv Optics', 'Solv Physio', 'Solv Meds', 'Solv Dental'] as const
 const PRODUCT_COLORS: Record<string, string> = {
   'Solv Optics': '#3b82f6',
@@ -40,8 +50,6 @@ const PRODUCT_COLORS: Record<string, string> = {
   'Solv Dental': '#6315ca'
 }
 
-// normalizeProduct(): cleans messy product strings from DB into the 4 options above.
-// Example: "optometry" -> "Solv Optics", "physio therapy" -> "Solv Physio"
 function normalizeProduct(v: string) {
   const t = (v || '').trim()
   if (!t) return 'Unknown'
@@ -54,17 +62,12 @@ function normalizeProduct(v: string) {
   return t
 }
 
-// ================= EMPTY FORMS =================
-// These are used to reset modals when creating a NEW item (vs editing existing)
-const EMPTY_PRACTICE = { practice_name: '', contact_person: '', phone: '', mobile: '', email: '', address: '', product: 'Solv Optics', notes: '' }
-const EMPTY_LOG = { practice_id: '', practice_name: '', contact_person: '', phone: '', product: 'Solv Optics', issue: '', solution: '', notes: '', status: 'Open' }
+const EMPTY_PRACTICE = { practice_name: '', practice_number: '', contact_person: '', phone: '', mobile: '', email: '', address: '', product: 'Solv Optics', notes: '' }
+const EMPTY_LOG = { practice_id: '', practice_name: '', practice_number: '', contact_person: '', phone: '', product: 'Solv Optics', issue: '', solution: '', notes: '', status: 'Open' }
 const EMPTY_APPT = { title: '', description: '', date: new Date().toISOString().split('T')[0], start_time: '09:00', end_time: '10:00', type: 'Meeting' as Appointment['type'], location: '', practice_name: '' }
 const APP_PASSWORD = process.env.NEXT_PUBLIC_APP_PASSWORD || 'SolvOptics456'
 const TODO_TITLE = "My To-Do List"
 
-// ================= UI HELPERS =================
-// statusStyle(): returns badge colors for log status (Open=blue, Closed=green, In Progress=yellow)
-// apptTypeStyle(): returns badge colors for appointment type - used in calendar chips
 function statusStyle(s: string) {
   if (s === 'Open') return { bg: '#dbeafe', color: '#1d4ed8', border: '#bfdbfe' }
   if (s === 'Closed') return { bg: '#dcfce7', color: '#15803d', border: '#bbf7d0' }
@@ -78,7 +81,6 @@ function apptTypeStyle(t: string) {
   return { bg:'#f1f5f9', color:'#670bdf', border:'#e2e8f0', dot:'#1864ce' }
 }
 
-// formatTodoTimestamp(): formats Supabase ISO timestamp to South African readable format for To-Do list
 function formatTodoTimestamp(iso: string) {
   try {
     return new Date(iso).toLocaleString('en-ZA', {
@@ -89,11 +91,6 @@ function formatTodoTimestamp(iso: string) {
 }
 
 export default function Page() {
-  // ================= STATE: THEME & AUTH =================
-  // theme: light/dark mode, persisted in localStorage
-  // isLoggedIn, pass, showPass: login form state
-  // failedAttempts, isLocked, countdown: brute-force protection - lock 30s after 3 fails
-  // showErrorPopup, shake: UI feedback for wrong password
   const [theme, setTheme] = useState<'light'|'dark'>('light')
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [pass, setPass] = useState('')
@@ -104,39 +101,21 @@ export default function Page() {
   const [showErrorPopup, setShowErrorPopup] = useState(false)
   const [shake, setShake] = useState(false)
 
-  // ================= STATE: DATA FROM SUPABASE =================
-  // practices, logs, todos, appointments: all rows from Supabase
-  // loading: true while initial fetch is running
   const [practices, setPractices] = useState<Practice[]>([])
   const [logs, setLogs] = useState<LogRow[]>([])
   const [todos, setTodos] = useState<Todo[]>([])
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [loading, setLoading] = useState(true)
 
-  // ================= STATE: TODO EDITING =================
-  // newTodoText: input for creating new todo
-  // editingTodoId + editingTodoText: which todo is being edited inline + its draft text
-  // todoFilter: All / Active / Done filter for todo list
   const [newTodoText, setNewTodoText] = useState('')
   const [editingTodoId, setEditingTodoId] = useState<string|null>(null)
   const [editingTodoText, setEditingTodoText] = useState('')
   const [todoFilter, setTodoFilter] = useState<'All' | 'Active' | 'Done'>('All')
 
-  // ================= STATE: NAVIGATION & FILTERS =================
-  // tab: which of the 5 tabs is active
-  // search: global search input - filters logs, practices, todos
-  // statusFilter: filters logs by Open / In Progress / Closed
   const [tab, setTab] = useState<'logs' | 'practices' | 'todos' | 'calendar' | 'kpi'>('logs')
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<'All' | 'Open' | 'In Progress' | 'Closed'>('All')
 
-  // ================= STATE: MODALS =================
-  // showPractice, editingPractice, pForm: practice create/edit modal
-  // showLog, editingLog, lForm: log create/edit modal - lForm holds practice_id for autofill
-  // showDetailLog, showDetailPractice, showDetailAppt: view-only detail modals
-  // calendarDate, selectedCalDate: calendar month being viewed + selected day (click behavior)
-  // showAppt, editingAppt, aForm: appointment create/edit modal
-  // toast, logoError: small UI states
   const [showPractice, setShowPractice] = useState(false)
   const [editingPractice, setEditingPractice] = useState<Practice | null>(null)
   const [pForm, setPForm] = useState<any>(EMPTY_PRACTICE)
@@ -154,8 +133,6 @@ export default function Page() {
   const [toast, setToast] = useState('')
   const [logoError, setLogoError] = useState(false)
 
-  // ================= EFFECT: INITIAL LOAD =================
-  // On mount: load theme from localStorage, check if user was logged in, fetch all Supabase tables
   useEffect(() => {
     const saved = localStorage.getItem('solv_theme') as 'light'|'dark'|null
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -164,20 +141,14 @@ export default function Page() {
     fetchAll()
   }, [])
 
-  // EFFECT: Persist theme to localStorage and toggle.dark class on <html> for Tailwind dark mode
   useEffect(() => {
     localStorage.setItem('solv_theme', theme)
     document.documentElement.classList.toggle('dark', theme==='dark')
   }, [theme])
 
-  // EFFECT: Handles login lock countdown - decrements every second, unlocks after 30s
   useEffect(() => { if (!isLocked) return; const t = setInterval(() => setCountdown(c => { if (c<=1){ setIsLocked(false); setFailedAttempts(0); return 0 } return c-1 }), 1000); return () => clearInterval(t) }, [isLocked])
-
-  // EFFECT: Auto-hide toast message after 2.5s
   useEffect(() => { if(toast){ const t=setTimeout(()=>setToast(''),2500); return()=>clearTimeout(t) } }, [toast])
 
-  // ================= DATA FETCHING =================
-  // fetchAll(): fetches all 4 tables in parallel from Supabase, ordered by created_at or date
   async function fetchAll(){
     setLoading(true)
     const [p,l,t,a] = await Promise.all([
@@ -193,25 +164,33 @@ export default function Page() {
     setLoading(false)
   }
 
-  // ================= AUTH LOGIC =================
-  // handleLogin(): checks password, sets isLoggedIn in localStorage, or triggers shake + lockout after 3 fails
   function handleLogin() {
     if (isLocked) return
     if (pass === APP_PASSWORD) { localStorage.setItem('isLoggedIn','true'); setIsLoggedIn(true); setFailedAttempts(0); setPass('') }
     else { const n=failedAttempts+1; setFailedAttempts(n); setShake(true); setShowErrorPopup(true); setTimeout(()=>setShake(false),400); setPass(''); if(n>=3){ setIsLocked(true); setCountdown(30) } }
   }
 
-  // ================= FILTERING LOGIC (SEARCH) =================
-  // filteredLogs: applies status filter + global search to logs
-  // filteredPractices: global search across practice fields
-  // filteredTodos: applies Active/Done filter + search
+  const getPracticeForLog = (log: LogRow) => {
+    if (log.practice_id) return practices.find(p => p.id === log.practice_id)
+    return practices.find(p => p.practice_name === log.practice_name)
+  }
+
   const filteredLogs = useMemo(()=>{
     let f=logs
     if (statusFilter!=='All') f=f.filter(l=>l.status===statusFilter)
-    if (search) f=f.filter(l=>(l.practice_name+l.issue+l.solution+l.product).toLowerCase().includes(search.toLowerCase()))
+    if (search) f=f.filter(l=>{
+      const linked = getPracticeForLog(l)
+      const searchStr = (l.practice_name+l.issue+l.solution+l.product+(linked?.practice_number||'')+(l.practice_number||'')).toLowerCase()
+      return searchStr.includes(search.toLowerCase())
+    })
     return f
-  }, [logs, search, statusFilter])
-  const filteredPractices = useMemo(()=> practices.filter(p=>(p.practice_name+p.contact_person+p.phone+p.email+p.product).toLowerCase().includes(search.toLowerCase())), [practices, search])
+  }, [logs, search, statusFilter, practices])
+
+  const filteredPractices = useMemo(()=> practices.filter(p=>
+    (p.practice_name+' '+(p.practice_number||'')+' '+p.contact_person+' '+p.phone+' '+p.email+' '+p.product)
+  .toLowerCase().includes(search.toLowerCase())
+  ), [practices, search])
+
   const filteredTodos = useMemo(()=>{
     let f = todos
     if (todoFilter==='Active') f=f.filter(t=>!t.done)
@@ -220,10 +199,6 @@ export default function Page() {
     return f
   }, [todos, todoFilter, search])
 
-  // ================= CALENDAR HELPERS =================
-  // toLocalDateStr(): converts Date to YYYY-MM-DD using LOCAL timezone (fixes UTC off-by-one bug)
-  // normalizeDateStr(): ensures date string is YYYY-MM-DD only
-  // todayLocalStr: today's date in local format - used for highlighting today + upcoming filter
   const toLocalDateStr = (d: Date) => {
     const y = d.getFullYear()
     const m = String(d.getMonth() + 1).padStart(2, '0')
@@ -233,11 +208,10 @@ export default function Page() {
   const normalizeDateStr = (s: string) => s.slice(0, 10)
   const todayLocalStr = toLocalDateStr(new Date())
 
-  // calendarGrid: builds month view grid (Mon-Sun) - pads empty cells before first day and after last day
   const calendarGrid = useMemo(() => {
     const y = calendarDate.getFullYear(), m = calendarDate.getMonth()
     const first = new Date(y, m, 1)
-    const startDay = (first.getDay() + 6) % 7 // convert Sunday=0 to Monday=0 start
+    const startDay = (first.getDay() + 6) % 7
     const daysInMonth = new Date(y, m + 1, 0).getDate()
     const cells: { date: Date | null, dateStr: string | null, isCurrentMonth: boolean }[] = []
     for (let i = 0; i < startDay; i++) cells.push({ date: null, dateStr: null, isCurrentMonth: false })
@@ -249,26 +223,25 @@ export default function Page() {
     return cells
   }, [calendarDate])
 
-  // getApptsForDate(): returns appointments for a specific date string, sorted by start_time
   const getApptsForDate = (dateStr: string) =>
     appointments.filter(a => normalizeDateStr(a.date) === dateStr).sort((a,b) => a.start_time.localeCompare(b.start_time))
 
-  // upcomingAppts: next 8 appointments from today onwards, sorted by date+time
   const upcomingAppts = useMemo(() => {
     return [...appointments].filter(a => normalizeDateStr(a.date) >= todayLocalStr).sort((a,b) => (normalizeDateStr(a.date) + a.start_time).localeCompare(normalizeDateStr(b.date) + b.start_time)).slice(0, 8)
   }, [appointments])
 
-  // selectedDayAppts: appointments for the day user clicked in calendar - shown below grid
   const selectedDayAppts = useMemo(() => {
     if (!selectedCalDate) return []
     return getApptsForDate(selectedCalDate)
   }, [selectedCalDate, appointments])
 
-  // ================= CRUD: PRACTICES =================
-  // savePractice(): validates name, normalizes product, then INSERT or UPDATE in Supabase
   async function savePractice() {
     if (!pForm.practice_name) { setToast('Practice Name required'); return }
-    const cleanedForm = {...pForm, product: normalizeProduct(pForm.product) }
+    const cleanedForm = {
+    ...pForm,
+      product: normalizeProduct(pForm.product),
+      practice_number: (pForm.practice_number || '').trim()
+    }
     if (editingPractice) {
       const { error, data } = await supabase.from('practices').update(cleanedForm).eq('id', editingPractice.id).select().single()
       if(error){ setToast(error.message); return }
@@ -281,7 +254,6 @@ export default function Page() {
     setShowPractice(false); setShowDetailPractice(null); setToast('Practice saved')
   }
 
-  // deletePractice(): deletes practice by id from Supabase and local state
   async function deletePractice(id: string) {
     const { error } = await supabase.from('practices').delete().eq('id', id)
     if (error) { setToast(error.message); return false }
@@ -290,13 +262,14 @@ export default function Page() {
     return true
   }
 
-  // ================= CRUD: LOGS =================
-  // saveLog(): validates practice + issue, builds payload with practice_id link, then INSERT or UPDATE
+  // UPDATED: saveLog now uses practice_number autofill, validates practice_id
   async function saveLog() {
-    if (!lForm.practice_name ||!lForm.issue) { setToast('Practice + Issue required'); return }
+    if (!lForm.practice_id ||!lForm.issue) { setToast('Select Practice + Issue required'); return }
+    const linkedPractice = practices.find(p => p.id === lForm.practice_id)
     const payload = {
       practice_id: lForm.practice_id || null,
-      practice_name: lForm.practice_name,
+      practice_name: linkedPractice?.practice_name || lForm.practice_name || '',
+      practice_number: linkedPractice?.practice_number || lForm.practice_number || '',
       contact_person: lForm.contact_person || '',
       phone: lForm.phone || '',
       product: normalizeProduct(lForm.product),
@@ -311,25 +284,36 @@ export default function Page() {
       setLogs(logs.map(x=>x.id===editingLog.id? data as any : x))
     } else {
       const { error, data } = await supabase.from('logs').insert(payload).select().single()
-      if(error){ setToast(error.message); return }
-      setLogs([data as any,...logs])
+      // If you haven't added practice_number column to logs yet, fallback without it
+      if(error){
+        if(error.message.includes('practice_number')){
+          const { practice_number,...fallback } = payload as any
+          const { error: e2, data: d2 } = await supabase.from('logs').insert(fallback).select().single()
+          if(e2){ setToast(e2.message); return }
+          setLogs([d2 as any,...logs])
+        } else {
+          setToast(error.message); return
+        }
+      } else {
+        setLogs([data as any,...logs])
+      }
     }
     setShowLog(false); setShowDetailLog(null); setToast('Log saved')
   }
 
-  // handlePracticeSelectForLog(): when user selects a practice in log modal, autofills practice_name, contact, phone, product
-  // This links logs to practices and saves typing
+  // UPDATED: autofill practice_number (greyed out) not just practice_name
   function handlePracticeSelectForLog(practiceId: string) {
     if (!practiceId) {
-      setLForm({...lForm, practice_id: '', practice_name: '', contact_person: '', phone: '', product: 'Solv Optics'})
+      setLForm({...lForm, practice_id: '', practice_name: '', practice_number: '', contact_person: '', phone: '', product: 'Solv Optics'})
       return
     }
     const p = practices.find(x=>x.id===practiceId)
     if (p) {
       setLForm({
-     ...lForm,
+       ...lForm,
         practice_id: p.id,
         practice_name: p.practice_name,
+        practice_number: p.practice_number || '',
         contact_person: p.contact_person || '',
         phone: p.phone || p.mobile || '',
         product: p.product || 'Solv Optics'
@@ -337,8 +321,6 @@ export default function Page() {
     }
   }
 
-  // ================= CRUD: APPOINTMENTS =================
-  // saveAppt(): validates title + date, then INSERT or UPDATE appointment
   async function saveAppt(){
     if(!aForm.title ||!aForm.date){ setToast('Title + Date required'); return }
     if(editingAppt){
@@ -353,27 +335,22 @@ export default function Page() {
     setShowAppt(false); setShowDetailAppt(null); setToast('Appointment saved')
   }
 
-  // ================= CRUD: TODOS =================
-  // addTodo(): creates new todo with text, done=false, Supabase auto-generates created_at timestamp
   async function addTodo(){
     const txt=newTodoText.trim(); if(!txt){ setToast('Type something'); return }
     const { data, error } = await supabase.from('todos').insert({ text: txt, done: false }).select().single()
     if(error){ setToast(error.message); return }
     setTodos([data as any,...todos]); setNewTodoText('')
   }
-  // toggleTodo(): flips done/undone status of a todo
   async function toggleTodo(id:string){
     const t=todos.find(x=>x.id===id); if(!t) return
     const { data, error } = await supabase.from('todos').update({ done:!t.done }).eq('id', id).select().single()
     if(error){ setToast(error.message); return }
     setTodos(todos.map(x=>x.id===id? data as any : x))
   }
-  // deleteTodo(): removes todo from Supabase and local state
   async function deleteTodo(id:string){
     await supabase.from('todos').delete().eq('id', id)
     setTodos(todos.filter(t=>t.id!==id))
   }
-  // updateTodoText(): saves edited text for an existing todo - enables inline editing
   async function updateTodoText(id:string){
     const txt = editingTodoText.trim()
     if(!txt){ setToast('Text required'); return }
@@ -384,14 +361,6 @@ export default function Page() {
     setToast('To-Do updated')
   }
 
-  // ================= KPI CALCULATIONS (RESTORED AS BEFORE) =================
-  // kpi: computes all dashboard stats:
-  // - open/prog/closed counts, totalLogs, todo stats, apptsThisMonth
-  // - byType: count per appointment type
-  // - logsByMonth + apptsByMonth: last 6 months trend (used for bar charts)
-  // - byProduct: logs per product, practicesByProduct: practices per product
-  // - byPracticeTop: top 5 practices by log count
-  // - maxLogsMonth, maxApptsMonth: max values for chart scaling
   const kpi = useMemo(()=>{
     const open = logs.filter(l=>l.status==='Open').length
     const prog = logs.filter(l=>l.status==='In Progress').length
@@ -426,8 +395,6 @@ export default function Page() {
     return { open, prog, closed, totalLogs, todoActive, todoDone, apptThisMonth, byType, logsByMonth, apptsByMonth, byProduct, byPracticeTop, practicesByProduct, maxLogsMonth, maxApptsMonth }
   }, [logs, todos, appointments, practices])
 
-  // ================= LIVE CLOCK =================
-  // nowStr: live updating timestamp shown in To-Do header - updates every second
   const [nowStr, setNowStr] = useState('')
   useEffect(() => {
     const update = () => setNowStr(new Date().toLocaleString('en-ZA', { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }))
@@ -436,8 +403,6 @@ export default function Page() {
     return () => clearInterval(id)
   }, [])
 
-  // ================= RENDER: LOGIN SCREEN =================
-  // Shows password gate if not logged in - includes theme toggle, blur blobs, shake animation on fail
   if (!isLoggedIn) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 sm:p-6 relative overflow-hidden bg-gradient-to-br from-[#0f1a2e] via-[#162447] to-[#1e3a5f]">
@@ -468,17 +433,13 @@ export default function Page() {
     )
   }
 
-  // ================= RENDER: MAIN APP =================
   return (
     <div className={`min-h-screen pb-28 sm:pb-10 transition-colors relative overflow-hidden ${theme==='dark'? 'bg-[#010614] text-slate-100' : 'bg-[#dbe7f6] text-slate-900'}`}>
-      {/* Background decorative blur - behind everything */}
       <div className="pointer-events-none fixed inset-0 -z-10">
         <div className={`absolute top-0 left-0 w-96 h-96 rounded-full blur-3xl -translate-x-1/3 -translate-y-1/3 ${theme==='dark'? 'bg-gradient-to-br from-blue-900/30 via-sky-900/20 to-transparent' : 'bg-gradient-to-br from-blue-300/60 via-sky-300/40 to-cyan-200/30'}`} />
         <div className={`absolute top-[40%] right-0 w-96 h-96 rounded-full blur-3xl translate-x-1/4 ${theme==='dark'? 'bg-gradient-to-br from-sky-900/20 via-blue-900/15 to-transparent' : 'bg-gradient-to-br from-sky-300/50 via-blue-200/30 to-transparent'}`} />
       </div>
 
-      {/* ================= HEADER ================= */}
-      {/* Sticky header: logo, counts, theme toggle, logout, global search bar */}
       <header className={`sticky top-0 z-10 backdrop-blur-xl border-b ${theme==='dark'? 'bg-[#070e24]/80 border-slate-800/60' : 'bg-[#eaf0f9]/80 border-blue-200/70'} shadow-[0_1px_0_0_rgba(255,255,255,0.6)_inset]`}>
         <div className="absolute inset-0 bg-gradient-to-r from-blue-500/[0.06] via-sky-500/[0.04] to-cyan-500/[0.04] pointer-events-none" />
         <div className="relative mx-auto w-full max-w-6xl px-4 sm:px-6 h-14 sm:h-16 flex items-center gap-2.5 sm:gap-3">
@@ -492,7 +453,6 @@ export default function Page() {
             <button onClick={()=>{ localStorage.removeItem('isLoggedIn'); setIsLoggedIn(false) }} className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm border active:scale-95 ${theme==='dark'? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>↪</button>
           </div>
         </div>
-        {/* Global Search: filters practices, logs, todos live */}
         <div className="relative mx-auto w-full max-w-6xl px-4 sm:px-6 pb-3 pt-2">
           <div className="relative group">
             <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition text-sm">⌕</span>
@@ -502,8 +462,6 @@ export default function Page() {
       </header>
 
       <main className="mx-auto w-full max-w-6xl p-4 sm:p-6">
-        {/* ================= TAB SWITCHER ================= */}
-        {/* Pill-style tab bar - switches between 5 sections */}
         <div className={`flex gap-1.5 mb-5 p-1 rounded-full w-full sm:w-fit overflow-x-auto scrollbar-none border shadow-sm backdrop-blur snap-x ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/80 border-blue-100'}`}>
           {[
             {k:'logs', l:'Logs', i:'📋'},
@@ -517,18 +475,33 @@ export default function Page() {
           })}
         </div>
 
-        {/* ================= TAB: LOGS ================= */}
-        {/* Shows support logs with status filter chips, each row clickable to view detail */}
         {tab==='logs' && (
           <div className={`rounded-2xl border shadow-[0_8px_30px_-12px_rgba(59,130,246,0.2)] overflow-hidden backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
             <div className={`p-4 border-b flex flex-col sm:flex-row gap-3 sm:justify-between sm:items-center ${theme==='dark'? 'border-slate-800' : 'border-blue-50'}`}><h3 className="font-bold text-sm bg-gradient-to-r from-blue-700 to-sky-600 bg-clip-text text-transparent">Logs • {statusFilter}</h3><button onClick={()=>{ setLForm(EMPTY_LOG); setEditingLog(null); setShowLog(true) }} className="h-10 w-full sm:w-auto px-5 rounded-xl bg-gradient-to-r from-blue-600 to-sky-500 text-white text-sm font-bold shadow active:scale-95">+ New Log</button></div>
             <div className={`flex gap-2 p-3 border-b overflow-x-auto scrollbar-none ${theme==='dark'? 'bg-slate-800/50 border-slate-800' : 'bg-blue-50/50 border-blue-50'}`}>{(['All','Open','In Progress','Closed'] as const).map(s=><button key={s} onClick={()=>setStatusFilter(s)} className={`h-8 px-4 rounded-full text-xs font-bold border whitespace-nowrap transition shrink-0 ${statusFilter===s?'bg-slate-900 text-white border-slate-900 dark:bg-white dark:text-black shadow-sm': theme==='dark'? 'bg-slate-900 border-slate-700 text-slate-400' : 'bg-white border-blue-100 text-slate-500'}`}>{s}</button>)}</div>
-            <div className={`divide-y ${theme==='dark'? 'divide-slate-800' : 'divide-blue-50'}`}>{filteredLogs.map(l=>{ const st=statusStyle(l.status); return <div key={l.id} onClick={()=>setShowDetailLog(l)} className={`p-4 flex justify-between gap-3 cursor-pointer ${theme==='dark'? 'hover:bg-slate-800/50' : 'hover:bg-blue-50/60'}`}><div className="min-w-0 flex-1"><div className="font-bold text-sm truncate">{l.practice_name} <span className="font-normal text- text-slate-400 ml-2">{normalizeProduct(l.product)}</span></div><div className="text-xs text-slate-500 line-clamp-2 mt-1">{l.issue}</div></div><span style={{ background: st.bg, color: st.color, borderColor: st.border }} className="h-fit text-xs font-bold px-3 py-1.5 rounded-full border shrink-0">{l.status}</span></div>})}{filteredLogs.length===0 && <div className="p-10 text-center text-sm text-slate-400">No logs</div>}</div>
+            <div className={`divide-y ${theme==='dark'? 'divide-slate-800' : 'divide-blue-50'}`}>
+              {filteredLogs.map(l=>{
+                const st=statusStyle(l.status);
+                const linked = getPracticeForLog(l)
+                return (
+                  <div key={l.id} onClick={()=>setShowDetailLog(l)} className={`p-4 flex justify-between gap-3 cursor-pointer ${theme==='dark'? 'hover:bg-slate-800/50' : 'hover:bg-blue-50/60'}`}>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-bold text-sm truncate flex items-center gap-2">
+                        {(linked?.practice_number || l.practice_number) && <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text- font-black">#{(linked?.practice_number || l.practice_number)}</span>}
+                        <span>{l.practice_name}</span>
+                        <span className="font-normal text- text-slate-400 ml-1">{normalizeProduct(l.product)}</span>
+                      </div>
+                      <div className="text-xs text-slate-500 line-clamp-2 mt-1">{l.issue}</div>
+                    </div>
+                    <span style={{ background: st.bg, color: st.color, borderColor: st.border }} className="h-fit text-xs font-bold px-3 py-1.5 rounded-full border shrink-0">{l.status}</span>
+                  </div>
+                )
+              })}
+              {filteredLogs.length===0 && <div className="p-10 text-center text-sm text-slate-400">No logs</div>}
+            </div>
           </div>
         )}
 
-        {/* ================= TAB: PRACTICES ================= */}
-        {/* List of client practices - each row shows contact + product, delete button on hover */}
         {tab==='practices' && (
           <div className={`rounded-2xl border shadow overflow-hidden backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
             <div className={`p-4 border-b flex justify-between items-center ${theme==='dark'? 'border-slate-800' : 'border-blue-50'}`}>
@@ -539,7 +512,10 @@ export default function Page() {
               {filteredPractices.map(p=>(
                 <div key={p.id} onClick={()=>setShowDetailPractice(p)} className={`p-4 flex justify-between items-center cursor-pointer group ${theme==='dark'? 'hover:bg-slate-800/50' : 'hover:bg-blue-50/60'}`}>
                   <div className="min-w-0 flex-1">
-                    <div className="font-bold text-sm truncate">{p.practice_name}</div>
+                    <div className="font-bold text-sm truncate flex items-center gap-2">
+                      {p.practice_number && <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text- font-black">#{p.practice_number}</span>}
+                      <span>{p.practice_name}</span>
+                    </div>
                     <div className="text-xs text-slate-500 truncate">{p.contact_person} • {p.phone||p.mobile} • <span className="font-bold text-blue-600">{p.product}</span></div>
                   </div>
                   <div className="flex items-center gap-2 ml-3">
@@ -553,11 +529,6 @@ export default function Page() {
           </div>
         )}
 
-        {/* ================= TAB: TODO WITH TIMESTAMP & EDIT ================= */}
-        {/* - Header with live clock + pending count
-                        - Input to add new todo
-                        - Filter chips All/Active/Done
-                        - Each todo shows created_at timestamp and has edit + delete + toggle */}
         {tab==='todos' && (
           <div className="max-w-2xl mx-auto w-full">
             <div className={`rounded-2xl border p-6 mb-6 shadow backdrop-blur ${theme==='dark'? 'bg-[#0b122c]/80 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
@@ -603,11 +574,6 @@ export default function Page() {
           </div>
         )}
 
-        {/* ================= TAB: CALENDAR (CLICK AS BEFORE) ================= */}
-        {/* - Month grid with Mon-Sun header
-                        - Clicking a date: sets selectedCalDate + if empty opens New Appointment modal with that date (old behavior)
-                        - Clicking appointment chip: opens detail modal
-                        - Below grid: selected day's appointments + upcoming 8 */}
         {tab==='calendar' && (
           <div className="space-y-4">
             <div className={`rounded-2xl border shadow overflow-hidden backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
@@ -631,7 +597,6 @@ export default function Page() {
                       onClick={()=> {
                         if (!cell.dateStr) return
                         setSelectedCalDate(cell.dateStr)
-                        // Old behavior restored: click empty date -> open new appointment modal
                         if (appts.length===0) {
                           setAForm({...EMPTY_APPT, date: cell.dateStr})
                           setEditingAppt(null)
@@ -680,13 +645,6 @@ export default function Page() {
           </div>
         )}
 
-        {/* ================= TAB: KPI (FULL REPORT AS BEFORE) ================= */}
-        {/* Restored dashboard:
-                        - Top 4 stat cards
-                        - Logs by Status with % bars
-                        - Logs by Product + Practices by Product + Top 5 Practices
-                        - 6-month bar charts for logs & appointments
-                        - Appointments by Type */}
         {tab==='kpi' && (
           <div className="space-y-5">
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -816,8 +774,6 @@ export default function Page() {
         )}
       </main>
 
-      {/* ================= MOBILE BOTTOM NAV ================= */}
-      {/* 5 tabs for mobile - fixed at bottom, hidden on desktop */}
       <nav className="fixed bottom-0 inset-x-0 z-20 sm:hidden border-t backdrop-blur-xl bg-white/80 dark:bg-slate-900/80 border-blue-100 dark:border-slate-800 pb-[env(safe-area-inset-bottom)]">
         <div className="grid grid-cols-5 gap-1 px-2 py-2">
           {[
@@ -834,17 +790,19 @@ export default function Page() {
         </div>
       </nav>
 
-      {/* ================= DETAIL MODALS (VIEW ONLY) ================= */}
-      {/* These show full details when you click a row/chip - with Edit + Delete buttons */}
       {showDetailPractice && (
         <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-slate-900/40 backdrop-blur-sm p-0 sm:p-4">
           <div className="w-full max-w-lg rounded-t-3xl sm:rounded-2xl p-[1.5px] shadow-2xl overflow-hidden">
             <div className={`relative w-full rounded-t-3xl sm:rounded-2xl p-6 ${theme==='dark'? 'bg-slate-900' : 'bg-white'}`}>
               <div className="flex justify-between items-center">
-                <h2 className="font-bold text-sm truncate pr-3">{showDetailPractice.practice_name}</h2>
+                <h2 className="font-bold text-sm truncate pr-3 flex items-center gap-2">
+                  {showDetailPractice.practice_number && <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-">#{showDetailPractice.practice_number}</span>}
+                  {showDetailPractice.practice_name}
+                </h2>
                 <button onClick={()=>setShowDetailPractice(null)} className={`w-10 h-10 rounded-xl flex items-center justify-center ${theme==='dark'? 'bg-slate-800' : 'bg-slate-100'}`}>✕</button>
               </div>
               <div className="mt-4 text-xs space-y-1 text-slate-600 dark:text-slate-300">
+                <div><b>Practice No:</b> {showDetailPractice.practice_number || '—'}</div>
                 <div><b>Contact:</b> {showDetailPractice.contact_person}</div>
                 <div><b>Phone:</b> {showDetailPractice.phone} {showDetailPractice.mobile && ` / ${showDetailPractice.mobile}`}</div>
                 <div><b>Email:</b> {showDetailPractice.email}</div>
@@ -865,7 +823,15 @@ export default function Page() {
         <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-slate-900/40 backdrop-blur-sm p-0 sm:p-4">
           <div className={`w-full max-w-lg rounded-t-3xl sm:rounded-2xl p-6 shadow-2xl border ${theme==='dark'? 'bg-slate-900 border-slate-800' : 'bg-white'}`}>
             <div className="flex justify-between"><h2 className="font-bold text-sm">Log Detail</h2><button onClick={()=>setShowDetailLog(null)} className={`w-10 h-10 rounded-xl flex items-center justify-center ${theme==='dark'? 'bg-slate-800' : 'bg-slate-100'}`}>✕</button></div>
-            <div className="mt-4"><div className="font-bold text-sm">{showDetailLog.practice_name} • {showDetailLog.status}</div><div className="mt-3 text-sm whitespace-pre-wrap"><b>Issue:</b> {showDetailLog.issue}</div><div className="mt-2 text-sm whitespace-pre-wrap"><b>Solution:</b> {showDetailLog.solution}</div><div className="mt-2 text-xs text-slate-500">{showDetailLog.notes}</div></div>
+            <div className="mt-4">
+              <div className="font-bold text-sm flex items-center gap-2">
+                {(getPracticeForLog(showDetailLog)?.practice_number || showDetailLog.practice_number) && <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-">#{(getPracticeForLog(showDetailLog)?.practice_number || showDetailLog.practice_number)}</span>}
+                {showDetailLog.practice_name} • {showDetailLog.status}
+              </div>
+              <div className="mt-3 text-sm whitespace-pre-wrap"><b>Issue:</b> {showDetailLog.issue}</div>
+              <div className="mt-2 text-sm whitespace-pre-wrap"><b>Solution:</b> {showDetailLog.solution}</div>
+              <div className="mt-2 text-xs text-slate-500">{showDetailLog.notes}</div>
+            </div>
             <div className="flex gap-2 mt-6"><button onClick={()=>{ setEditingLog(showDetailLog); setLForm(showDetailLog); setShowLog(true) }} className="flex-1 h-11 rounded-xl bg-slate-900 text-white text-sm font-bold dark:bg-white dark:text-black">Edit</button><button onClick={async()=>{ await supabase.from('logs').delete().eq('id', showDetailLog.id); setLogs(logs.filter(x=>x.id!==showDetailLog.id)); setShowDetailLog(null)}} className="flex-1 h-11 rounded-xl bg-red-50 text-red-600 text-sm font-bold">Delete</button></div>
           </div>
         </div>
@@ -873,14 +839,15 @@ export default function Page() {
 
       {showDetailAppt && (<div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-slate-900/40 backdrop-blur-sm p-0 sm:p-4"><div className={`w-full max-w-lg rounded-t-3xl sm:rounded-2xl p-6 shadow-2xl border ${theme==='dark'? 'bg-slate-900 border-slate-800' : 'bg-white'}`}><div className="flex justify-between"><h2 className="font-bold text-sm truncate pr-2">{showDetailAppt.title}</h2><button onClick={()=>setShowDetailAppt(null)} className={`w-10 h-10 rounded-xl flex items-center justify-center ${theme==='dark'? 'bg-slate-800' : 'bg-slate-100'}`}>✕</button></div><div className="mt-4 text-sm"><div>{showDetailAppt.date} • {showDetailAppt.start_time}-{showDetailAppt.end_time}</div><div className="mt-2">{showDetailAppt.description}</div><div className="mt-1 text-xs text-slate-500">{showDetailAppt.location}</div></div><div className="flex gap-2 mt-6"><button onClick={()=>{ setEditingAppt(showDetailAppt); setAForm(showDetailAppt); setShowAppt(true) }} className="flex-1 h-11 rounded-xl bg-slate-900 text-white text-sm font-bold dark:bg-white dark:text-black">Edit</button><button onClick={async()=>{ await supabase.from('appointments').delete().eq('id', showDetailAppt.id); setAppointments(appointments.filter(a=>a.id!==showDetailAppt.id)); setShowDetailAppt(null)}} className="flex-1 h-11 rounded-xl bg-red-50 text-red-600 text-sm font-bold">Delete</button></div></div></div>)}
 
-      {/* ================= CREATE/EDIT MODALS ================= */}
-      {/* Practice Modal: full form with all fields */}
       {showPractice && (
         <div className="fixed inset-0 z-[110] flex items-end sm:items-center justify-center bg-slate-900/40 backdrop-blur-sm p-0 sm:p-4">
           <div className={`w-full max-w-lg rounded-t-3xl sm:rounded-2xl p-6 shadow-2xl border max-h- overflow-y-auto ${theme==='dark'? 'bg-slate-900 border-slate-800' : 'bg-white'}`}>
             <div className="flex justify-between"><h2 className="font-bold text-sm">{editingPractice?'Edit':'New'} Practice</h2><button onClick={()=>setShowPractice(false)} className={`w-10 h-10 rounded-xl flex items-center justify-center ${theme==='dark'? 'bg-slate-800' : 'bg-slate-100'}`}>✕</button></div>
             <div className="flex flex-col gap-3 mt-6">
-              <input value={pForm.practice_name?? ''} onChange={e=>setPForm({...pForm, practice_name: e.target.value})} placeholder="Practice Name *" className={`h-11 rounded-xl border px-4 text-sm ${theme==='dark'? 'bg-slate-800 border-slate-700' : 'bg-blue-50/60 border-blue-100'}`} />
+              <div className="grid grid-cols-3 gap-3">
+                <input value={pForm.practice_name?? ''} onChange={e=>setPForm({...pForm, practice_name: e.target.value})} placeholder="Practice Name *" className={`col-span-2 h-11 rounded-xl border px-4 text-sm ${theme==='dark'? 'bg-slate-800 border-slate-700' : 'bg-blue-50/60 border-blue-100'}`} />
+                <input value={pForm.practice_number?? ''} onChange={e=>setPForm({...pForm, practice_number: e.target.value})} placeholder="No. e.g. 12345" className={`h-11 rounded-xl border px-4 text-sm font-bold ${theme==='dark'? 'bg-slate-800 border-slate-700' : 'bg-white border-blue-200'}`} />
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <input value={pForm.contact_person?? ''} onChange={e=>setPForm({...pForm, contact_person: e.target.value})} placeholder="Contact Person" className={`h-11 rounded-xl border px-4 text-sm ${theme==='dark'? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-200'}`} />
                 <select value={pForm.product?? 'Solv Optics'} onChange={e=>setPForm({...pForm, product: e.target.value})} className={`h-11 w-full rounded-xl border px-4 text-sm font-bold ${theme==='dark'? 'bg-slate-800 border-slate-700' : 'bg-white border-blue-200'}`}><option>Solv Optics</option><option>Solv Physio</option><option>Solv Meds</option><option>Solv Dental</option></select>
@@ -898,18 +865,37 @@ export default function Page() {
         </div>
       )}
 
-      {/* Log Modal: practice dropdown with autofill + product + status + issue/solution */}
+      {/* UPDATED LOG MODAL - Practice Number greyed out */}
       {showLog && (
         <div className="fixed inset-0 z-[110] flex items-end sm:items-center justify-center bg-slate-900/40 backdrop-blur-sm p-0 sm:p-4">
           <div className={`w-full max-w-lg rounded-t-3xl sm:rounded-2xl p-6 shadow-2xl border max-h- overflow-y-auto ${theme==='dark'? 'bg-slate-900 border-slate-800' : 'bg-white'}`}>
             <div className="flex justify-between"><h2 className="font-bold text-sm">{editingLog?'Edit':'New'} Log</h2><button onClick={()=>setShowLog(false)} className={`w-10 h-10 rounded-xl flex items-center justify-center ${theme==='dark'? 'bg-slate-800' : 'bg-slate-100'}`}>✕</button></div>
             <div className="flex flex-col gap-3 mt-5">
-              <label className="text- font-bold uppercase text-slate-500">Practice *</label>
-              <select value={lForm.practice_id || ''} onChange={e=>handlePracticeSelectForLog(e.target.value)} className={`h-11 w-full rounded-xl border px-4 text-sm ${theme==='dark'? 'bg-slate-800 border-slate-700' : 'bg-white border-blue-200'}`}>
+              <label className="text- font-bold uppercase tracking-widest text-slate-500">Select Practice *</label>
+              <select value={lForm.practice_id || ''} onChange={e=>handlePracticeSelectForLog(e.target.value)} className={`h-11 w-full rounded-xl border px-4 text-sm font-bold ${theme==='dark'? 'bg-slate-800 border-slate-700' : 'bg-white border-blue-200'}`}>
                 <option value="">-- Select Practice --</option>
-                {practices.map(p=> <option key={p.id} value={p.id}>{p.practice_name} ({p.product})</option>)}
+                {practices.map(p=> <option key={p.id} value={p.id}>{p.practice_number? `#${p.practice_number} - ` : ''}{p.practice_name} ({p.product})</option>)}
               </select>
-              <input value={lForm.practice_name} onChange={e=>setLForm({...lForm, practice_name: e.target.value})} placeholder="Practice Name (autofilled)" className={`h-11 rounded-xl border px-4 text-sm ${theme==='dark'? 'bg-slate-800 border-slate-700' : 'bg-blue-50/60 border-blue-100'}`} />
+
+              {/* NEW: Practice Number autofill - greyed out */}
+              <div>
+                <label className="text- font-bold uppercase tracking-widest text-slate-500">Practice Number</label>
+                <input
+                  value={lForm.practice_number || ''}
+                  disabled
+                  readOnly
+                  placeholder="Select practice to auto-fill number"
+                  className={`h-11 w-full rounded-xl border px-4 text-sm font-black cursor-not-allowed mt-1
+                    ${theme==='dark'? 'bg-slate-800 border-slate-700 text-slate-400' : 'bg-slate-100 border-slate-200 text-slate-500'}`}
+                />
+                {lForm.practice_name && (
+                  <div className="text- text-slate-500 mt-1.5 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                    Linked to: <span className="font-bold text-slate-700 dark:text-slate-300">{lForm.practice_name}</span>
+                  </div>
+                )}
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <select value={lForm.product} onChange={e=>setLForm({...lForm, product: e.target.value})} className={`h-11 rounded-xl border px-3 text-sm ${theme==='dark'? 'bg-slate-800 border-slate-700' : 'bg-white border-blue-200'}`}><option>Solv Optics</option><option>Solv Physio</option><option>Solv Meds</option><option>Solv Dental</option></select>
                 <select value={lForm.status} onChange={e=>setLForm({...lForm, status: e.target.value})} className={`h-11 rounded-xl border px-3 text-sm ${theme==='dark'? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}><option>Open</option><option>In Progress</option><option>Closed</option></select>
@@ -923,7 +909,6 @@ export default function Page() {
         </div>
       )}
 
-      {/* Appointment Modal: title, date, type, times, location, description */}
       {showAppt && (
         <div className="fixed inset-0 z-[110] flex items-end sm:items-center justify-center bg-slate-900/40 backdrop-blur-sm p-0 sm:p-4">
           <div className={`w-full max-w-lg rounded-t-3xl sm:rounded-2xl p-6 overflow-y-auto shadow-2xl border max-h- ${theme==='dark'? 'bg-slate-900 border-slate-800' : 'bg-white'}`}>
@@ -946,7 +931,6 @@ export default function Page() {
         </div>
       )}
 
-      {/* Toast: small popup at bottom for feedback like "Practice saved" */}
       {toast && <div onClick={()=>setToast('')} className="fixed bottom-24 sm:bottom-6 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-6 py-3 rounded-full text-sm font-bold shadow z-[200] max-w- truncate dark:bg-white dark:text-black">{toast}</div>}
     </div>
   )
