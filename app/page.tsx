@@ -846,7 +846,7 @@ export default function Page() {
             <div className="flex flex-col gap-3 mt-6">
               <div className="grid grid-cols-3 gap-3">
                 <input value={pForm.practice_name?? ''} onChange={e=>setPForm({...pForm, practice_name: e.target.value})} placeholder="Practice Name *" className={`col-span-2 h-11 rounded-xl border px-4 text-sm ${theme==='dark'? 'bg-slate-800 border-slate-700' : 'bg-blue-50/60 border-blue-100'}`} />
-                <input value={pForm.practice_number?? ''} onChange={e=>setPForm({...pForm, practice_number: e.target.value})} placeholder="Pratice No." className={`h-11 rounded-xl border px-4 text-sm font-bold ${theme==='dark'? 'bg-slate-800 border-slate-700' : 'bg-white border-blue-200'}`} />
+                <input value={pForm.practice_number?? ''} onChange={e=>setPForm({...pForm, practice_number: e.target.value})} placeholder="Practice No." className={`h-11 rounded-xl border px-4 text-sm font-bold ${theme==='dark'? 'bg-slate-800 border-slate-700' : 'bg-white border-blue-200'}`} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <input value={pForm.contact_person?? ''} onChange={e=>setPForm({...pForm, contact_person: e.target.value})} placeholder="Contact Person" className={`h-11 rounded-xl border px-4 text-sm ${theme==='dark'? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-200'}`} />
