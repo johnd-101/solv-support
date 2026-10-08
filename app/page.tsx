@@ -41,7 +41,7 @@ type LogRow = {
   status: string
 }
 type Todo = { id: string; text: string; done: boolean; created_at: string }
-type Appointment = { id: string; created_at: string; title: string; description: string; date: string; start_time: string; end_time: string; type: 'Meeting'|'Call'|'Visit'|'Personal'|'Other'; location: string; practice_name?: string }
+type Appointment = { id: string; created_at: string; title: string; description: string; date: string; start_time: string; end_time: string; type: 'Demo'|'Call'|'Visit'|'Personal'|'Meeting'; location: string; practice_name?: string }
 
 const PRODUCT_OPTIONS = [ 'Solv Optics', 'Solv Physio', 'Solv Meds', 'Solv Dental'] as const
 const PRODUCT_COLORS: Record<string, string> = {
@@ -92,6 +92,157 @@ function formatTodoTimestamp(iso: string) {
   } catch { return iso }
 }
 
+
+// ================= KPI CHART COMPONENTS =================
+// Lightweight SVG charts: no extra chart library or database changes required.
+// All charts receive live KPI data, so they automatically change as data changes.
+
+type KpiChartDatum = { label: string; value: number; color?: string }
+
+function KpiDonut({ data, total, theme }: { data: KpiChartDatum[]; total: number; theme: 'light'|'dark' }) {
+  const safeTotal = Math.max(total, 1)
+  const radius = 44
+  const circumference = 2 * Math.PI * radius
+  let offset = 0
+
+  return (
+    <div className="flex items-center justify-center gap-5 min-h-[190px]">
+      <div className="relative w-44 h-44 shrink-0">
+        <svg viewBox="0 0 120 120" className="w-full h-full -rotate-90">
+          <circle cx="60" cy="60" r={radius} fill="none" stroke={theme==='dark'?'#1e293b':'#e2e8f0'} strokeWidth="16" />
+          {data.map((item, i) => {
+            const length = (item.value / safeTotal) * circumference
+            const circle = (
+              <circle
+                key={`${item.label}-${i}`}
+                cx="60"
+                cy="60"
+                r={radius}
+                fill="none"
+                stroke={item.color || '#3b82f6'}
+                strokeWidth="16"
+                strokeDasharray={`${Math.max(length, item.value > 0 ? 0.5 : 0)} ${circumference}`}
+                strokeDashoffset={-offset}
+                strokeLinecap="butt"
+                className="transition-all duration-500"
+              />
+            )
+            offset += length
+            return circle
+          })}
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <div className="text-2xl font-black">{total}</div>
+          <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Total logs</div>
+        </div>
+      </div>
+      <div className="space-y-3 min-w-0">
+        {data.map(item => {
+          const pct = total ? Math.round(item.value / total * 100) : 0
+          return (
+            <div key={item.label} className="flex items-center gap-2.5">
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{background:item.color || '#3b82f6'}} />
+              <span className="text-xs font-bold truncate">{item.label}</span>
+              <span className="text-xs font-black ml-auto">{item.value}</span>
+              <span className="text-[10px] text-slate-400 w-8 text-right">{pct}%</span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function KpiBarChart({ data, theme, horizontal=false }: { data: KpiChartDatum[]; theme: 'light'|'dark'; horizontal?: boolean }) {
+  const max = Math.max(1, ...data.map(x=>x.value))
+  if (horizontal) {
+    return (
+      <div className="space-y-3 py-1">
+        {data.map(item => (
+          <div key={item.label} className="grid grid-cols-[minmax(80px,1fr)_minmax(90px,2fr)_34px] items-center gap-2">
+            <div className="text-xs font-bold truncate" title={item.label}>{item.label}</div>
+            <div className={`h-3 rounded-full overflow-hidden ${theme==='dark'?'bg-slate-800':'bg-slate-100'}`}>
+              <div className="h-full rounded-full transition-all duration-500" style={{width:`${item.value/max*100}%`, background:item.color || 'linear-gradient(90deg,#2563eb,#38bdf8)'}} />
+            </div>
+            <div className="text-xs font-black text-right">{item.value}</div>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  return (
+    <div className="h-52 flex items-end gap-2 sm:gap-3 pt-3">
+      {data.map(item => {
+        const height = item.value ? Math.max(6, Math.round(item.value/max*100)) : 2
+        return (
+          <div key={item.label} className="flex-1 min-w-0 h-full flex flex-col items-center justify-end gap-1.5">
+            <div className="text-[10px] font-black">{item.value}</div>
+            <div className="w-full max-w-12 h-full flex items-end">
+              <div
+                className="w-full rounded-t-xl transition-all duration-500"
+                style={{height:`${height}%`, background:item.color || 'linear-gradient(180deg,#38bdf8,#2563eb)'}}
+              />
+            </div>
+            <div className="text-[10px] sm:text-xs font-bold text-slate-500 truncate max-w-full">{item.label}</div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function KpiLineChart({ data, data2, theme }: {
+  data: KpiChartDatum[]
+  data2?: KpiChartDatum[]
+  theme: 'light'|'dark'
+}) {
+  const width = 700
+  const height = 230
+  const pad = { l: 34, r: 18, t: 22, b: 34 }
+  const plotW = width-pad.l-pad.r
+  const plotH = height-pad.t-pad.b
+  const max = Math.max(1, ...data.map(x=>x.value), ...(data2||[]).map(x=>x.value))
+  const point = (value:number, index:number, length:number) => {
+    const x = pad.l + (length<=1 ? plotW/2 : index/(length-1)*plotW)
+    const y = pad.t + plotH - (value/max)*plotH
+    return {x,y}
+  }
+  const points = data.map((d,i)=>point(d.value,i,data.length))
+  const points2 = data2?.map((d,i)=>point(d.value,i,data2.length)) || []
+  const poly = (pts:{x:number;y:number}[]) => pts.map(p=>`${p.x},${p.y}`).join(' ')
+  const grid = [0, .25, .5, .75, 1]
+
+  return (
+    <div className="w-full overflow-x-auto">
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full min-w-[520px] h-56">
+        {grid.map((ratio,i)=>{
+          const y=pad.t+plotH-ratio*plotH
+          return <line key={i} x1={pad.l} x2={width-pad.r} y1={y} y2={y} stroke={theme==='dark'?'#1e293b':'#e2e8f0'} strokeWidth="1" />
+        })}
+        <polyline fill="none" stroke="#2563eb" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" points={poly(points)} />
+        {data2 && <polyline fill="none" stroke="#8b5cf6" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" points={poly(points2)} />}
+        {points.map((p,i)=><circle key={`a-${i}`} cx={p.x} cy={p.y} r="5" fill="#2563eb" stroke={theme==='dark'?'#0f172a':'white'} strokeWidth="3" />)}
+        {points2.map((p,i)=><circle key={`b-${i}`} cx={p.x} cy={p.y} r="5" fill="#8b5cf6" stroke={theme==='dark'?'#0f172a':'white'} strokeWidth="3" />)}
+        {data.map((d,i)=>{
+          const p=points[i]
+          return <text key={`t-${i}`} x={p.x} y={height-10} textAnchor="middle" className="fill-slate-500" fontSize="12" fontWeight="700">{d.label}</text>
+        })}
+      </svg>
+    </div>
+  )
+}
+
+function KpiMiniStat({ label, value, sub, theme }: { label:string; value:string|number; sub:string; theme:'light'|'dark' }) {
+  return (
+    <div className={`rounded-xl border p-3 ${theme==='dark'?'bg-slate-900/70 border-slate-800':'bg-slate-50 border-slate-100'}`}>
+      <div className="text-[10px] uppercase tracking-widest font-black text-slate-400">{label}</div>
+      <div className="text-xl font-black mt-1">{value}</div>
+      <div className="text-[10px] text-slate-400 mt-0.5">{sub}</div>
+    </div>
+  )
+}
+
 export default function Page() {
   const [theme, setTheme] = useState<'light'|'dark'>('light')
   const [isLoggedIn, setIsLoggedIn] = useState(false)
@@ -115,6 +266,7 @@ export default function Page() {
   const [todoFilter, setTodoFilter] = useState<'All' | 'Active' | 'Done'>('All')
 
   const [tab, setTab] = useState<'logs' | 'practices' | 'todos' | 'calendar' | 'kpi'>('logs')
+  const [kpiChartView, setKpiChartView] = useState<'overview'|'trends'|'workload'>('overview')
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<'All' | 'Open' | 'In Progress' | 'Closed'>('All')
 
@@ -667,154 +819,205 @@ export default function Page() {
           </div>
         )}
 
-        {/* ================= KPI TAB WITH CLEAR COMMENTS ================= */}
+        {/* ================= KPI TAB - VARIABLE CHART DASHBOARD ================= */}
         {tab==='kpi' && (
           <div className="space-y-5">
-            {/* KPI HEADER EXPLANATION */}
             <div className={`rounded-2xl border p-4 ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-blue-50/80 border-blue-100'}`}>
-              <h2 className="font-black text-sm tracking-tight">KPI REPORT - What is this?</h2>
-              <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                KPI = Key Performance Indicators. This dashboard shows your support & sales performance at a glance:
-                Open issues that need fixing, which products cause most logs, which practices need attention, and monthly trends.
-              </p>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <h2 className="font-black text-sm tracking-tight">KPI REPORT</h2>
+                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                    Live performance overview using your existing logs, practices, appointments and to-dos.
+                    Charts automatically resize and update when your data changes.
+                  </p>
+                </div>
+                <div className={`flex rounded-xl p-1 border shrink-0 ${theme==='dark'?'bg-slate-950 border-slate-800':'bg-white border-blue-100'}`}>
+                  {[
+                    {k:'overview',l:'Overview'},
+                    {k:'trends',l:'Trends'},
+                    {k:'workload',l:'Workload'},
+                  ].map(v=>(
+                    <button
+                      key={v.k}
+                      onClick={()=>setKpiChartView(v.k as any)}
+                      className={`px-3 py-2 rounded-lg text-xs font-bold transition ${kpiChartView===v.k?'bg-blue-600 text-white shadow':'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                    >
+                      {v.l}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
 
-            {/* TOP SUMMARY CARDS */}
+            {/* TOP SUMMARY CARDS - unchanged metrics */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {[
                 {l:'PRACTICES', v:practices.length, g:'from-blue-600 to-sky-500', desc:'Total practices registered'},
                 {l:'TOTAL LOGS', v:kpi.totalLogs, g:'from-blue-600 to-cyan-500', desc:'All support logs ever'},
                 {l:'OPEN LOGS', v:kpi.open, g:'from-amber-500 to-orange-500', desc:'Needs action now'},
                 {l:'TODOS LEFT', v:kpi.todoActive, g:'from-sky-500 to-blue-500', desc:'Pending tasks'},
-              ].map(card=> <div key={card.l} className={`rounded-2xl border p-[1.5px] shadow-sm ${theme==='dark'? 'border-slate-800' : 'border-blue-100'}`}><div className={`rounded- p-4 h-full ${theme==='dark'? 'bg-slate-900' : 'bg-white'}`}><div className="text- font-bold tracking-widest text-slate-500">{card.l}</div><div className={`text-2xl font-black mt-1 bg-gradient-to-r ${card.g} bg-clip-text text-transparent`}>{card.v}</div><div className="text- text-slate-400 mt-1">{card.desc}</div></div></div>)}
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {/* Logs by Status = Workload health */}
-              <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
-                <h3 className="font-bold text-sm mb-1">Logs by Status</h3>
-                <p className="text- text-slate-400 mb-4">Health check: Open = to-do, In Progress = working, Closed = done</p>
-                <div className="space-y-3">
-                  {[
-                    {label:'Open', count:kpi.open, color:'#3b82f6'},
-                    {label:'In Progress', count:kpi.prog, color:'#f59e0b'},
-                    {label:'Closed', count:kpi.closed, color:'#22c55e'},
-                  ].map(s=>{
-                    const pct = kpi.totalLogs? Math.round(s.count/kpi.totalLogs*100):0
-                    return (
-                      <div key={s.label} className="flex items-center gap-3">
-                        <div className="w-20 text-xs font-bold text-slate-500">{s.label}</div>
-                        <div className="flex-1 h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                          <div className="h-full rounded-full transition-all" style={{width:`${pct}%`, background:s.color}}></div>
-                        </div>
-                        <div className="w-12 text-xs font-black text-right">{s.count} <span className="font-normal text-slate-400">{pct}%</span></div>
-                      </div>
-                    )
-                  })}
-                </div>
-                <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-between text-xs">
-                  <span className="text-slate-500">To-Dos: {kpi.todoDone} done / {kpi.todoActive} left</span>
-                  <span className="text-slate-500">Appts this month: {kpi.apptThisMonth}</span>
-                </div>
-              </div>
-
-              {/* Logs by Product = Which product has most issues */}
-              <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
-                <h3 className="font-bold text-sm mb-1">Logs by Product</h3>
-                <p className="text- text-slate-400 mb-4">Which product line generates most support tickets</p>
-                <div className="space-y-2.5">
-                  {kpi.byProduct.map(p=>{
-                    const pct = kpi.totalLogs? Math.round(p.count/kpi.totalLogs*100):0
-                    return (
-                      <div key={p.product} className="flex items-center gap-3">
-                        <div className="w-3 h-3 rounded-full shrink-0" style={{background:PRODUCT_COLORS[p.product]||'#94a3b8'}}></div>
-                        <div className="flex-1 min-w-0 text-xs font-bold truncate">{p.product}</div>
-                        <div className="flex-1 h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden max-w-">
-                          <div className="h-full rounded-full" style={{width:`${pct}%`, background:PRODUCT_COLORS[p.product]||'#94a3b8'}}></div>
-                        </div>
-                        <div className="text-xs font-black w-8 text-right">{p.count}</div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {/* Practices by Product + Top clients */}
-              <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
-                <h3 className="font-bold text-sm mb-1">Practices by Product</h3>
-                <p className="text- text-slate-400 mb-4">Client distribution per product</p>
-                <div className="space-y-2.5">
-                  {kpi.practicesByProduct.map(p=>(
-                    <div key={p.product} className="flex items-center gap-3">
-                      <div className="w-3 h-3 rounded-full shrink-0" style={{background:PRODUCT_COLORS[p.product]||'#94a3b8'}}></div>
-                      <div className="flex-1 text-xs font-bold">{p.product}</div>
-                      <div className="text-xs font-black">{p.count}</div>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
-                  <h4 className="text- font-bold tracking-widest text-slate-400 mb-2">TOP PRACTICES BY LOGS - High maintenance clients</h4>
-                  <div className="space-y-1.5">
-                    {kpi.byPracticeTop.map(tp=>(
-                      <div key={tp.name} className="flex justify-between text-xs"><span className="truncate font-medium">{tp.name}</span><span className="font-black ml-2">{tp.count}</span></div>
-                    ))}
-                    {kpi.byPracticeTop.length===0&&<div className="text-xs text-slate-400">No logs yet</div>}
+              ].map(card=>(
+                <div key={card.l} className={`rounded-2xl border p-[1.5px] shadow-sm ${theme==='dark'? 'border-slate-800' : 'border-blue-100'}`}>
+                  <div className={`rounded-2xl p-4 h-full ${theme==='dark'? 'bg-slate-900' : 'bg-white'}`}>
+                    <div className="text-xs font-bold tracking-widest text-slate-500">{card.l}</div>
+                    <div className={`text-2xl font-black mt-1 bg-gradient-to-r ${card.g} bg-clip-text text-transparent`}>{card.v}</div>
+                    <div className="text-xs text-slate-400 mt-1">{card.desc}</div>
                   </div>
                 </div>
-              </div>
+              ))}
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* 6-month log trend */}
-              <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
-                <h3 className="font-bold text-sm mb-1">Logs - Last 6 Months</h3>
-                <p className="text- text-slate-400 mb-4 tracking-widest font-bold uppercase">Support trend - increasing or decreasing?</p>
-                <div className="flex items-end gap-2 h-32">
-                  {kpi.logsByMonth.map(m=>{
-                    const h = Math.round(m.count/kpi.maxLogsMonth*100)
-                    return (
-                      <div key={m.key} className="flex-1 flex flex-col items-center gap-2">
-                        <div className="text- font-black">{m.count}</div>
-                        <div className="w-full rounded-t-lg bg-gradient-to-t from-blue-600 to-sky-400 transition-all" style={{height:`${h}%`, minHeight: m.count>0?'8px':'2px'}}></div>
-                        <div className="text- font-bold text-slate-500">{m.label}</div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {/* 6-month appointment trend */}
-              <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
-                <h3 className="font-bold text-sm mb-1">Appointments - Last 6 Months</h3>
-                <p className="text- text-slate-400 mb-4 tracking-widest font-bold uppercase">Field activity trend</p>
-                <div className="flex items-end gap-2 h-32">
-                  {kpi.apptsByMonth.map(m=>{
-                    const h = Math.round(m.count/kpi.maxApptsMonth*100)
-                    return (
-                      <div key={m.key} className="flex-1 flex flex-col items-center gap-2">
-                        <div className="text- font-black">{m.count}</div>
-                        <div className="w-full rounded-t-lg bg-gradient-to-t from-violet-600 to-indigo-400 transition-all" style={{height:`${h}%`, minHeight: m.count>0?'8px':'2px'}}></div>
-                        <div className="text- font-bold text-slate-500">{m.label}</div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
+            {/* QUICK KPI HEALTH */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <KpiMiniStat label="Resolution rate" value={`${kpi.totalLogs ? Math.round(kpi.closed/kpi.totalLogs*100) : 0}%`} sub={`${kpi.closed} closed logs`} theme={theme} />
+              <KpiMiniStat label="Open workload" value={`${kpi.totalLogs ? Math.round(kpi.open/kpi.totalLogs*100) : 0}%`} sub={`${kpi.open} logs need action`} theme={theme} />
+              <KpiMiniStat label="To-do completion" value={`${kpi.todoDone+kpi.todoActive ? Math.round(kpi.todoDone/(kpi.todoDone+kpi.todoActive)*100) : 0}%`} sub={`${kpi.todoDone} completed`} theme={theme} />
+              <KpiMiniStat label="Appointments" value={kpi.apptThisMonth} sub="This month" theme={theme} />
             </div>
 
-            {/* Appointments by Type */}
+            {kpiChartView==='overview' && (
+              <>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
+                    <h3 className="font-bold text-sm mb-1">Log Status Distribution</h3>
+                    <p className="text-xs text-slate-400 mb-3">Current support workload by status.</p>
+                    <KpiDonut
+                      theme={theme}
+                      total={kpi.totalLogs}
+                      data={[
+                        {label:'Open',value:kpi.open,color:'#3b82f6'},
+                        {label:'In Progress',value:kpi.prog,color:'#f59e0b'},
+                        {label:'Closed',value:kpi.closed,color:'#22c55e'},
+                      ]}
+                    />
+                  </div>
+
+                  <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
+                    <h3 className="font-bold text-sm mb-1">Logs by Product</h3>
+                    <p className="text-xs text-slate-400 mb-3">Which product line generates the most support activity.</p>
+                    <KpiBarChart
+                      theme={theme}
+                      horizontal
+                      data={kpi.byProduct.map(p=>({label:p.product,value:p.count,color:PRODUCT_COLORS[p.product]||'#94a3b8'}))}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
+                    <h3 className="font-bold text-sm mb-1">Practices by Product</h3>
+                    <p className="text-xs text-slate-400 mb-3">Live client distribution across products.</p>
+                    <KpiBarChart
+                      theme={theme}
+                      data={kpi.practicesByProduct.map(p=>({label:p.product,value:p.count,color:PRODUCT_COLORS[p.product]||'#94a3b8'}))}
+                    />
+                  </div>
+
+                  <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
+                    <h3 className="font-bold text-sm mb-1">Top Practices by Logs</h3>
+                    <p className="text-xs text-slate-400 mb-3">Practices generating the most support interactions.</p>
+                    {kpi.byPracticeTop.length ? (
+                      <KpiBarChart
+                        theme={theme}
+                        horizontal
+                        data={kpi.byPracticeTop.map((p,i)=>({label:p.name,value:p.count,color:i===0?'#2563eb':'#60a5fa'}))}
+                      />
+                    ) : (
+                      <div className="h-52 flex items-center justify-center text-sm text-slate-400">No logs yet</div>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {kpiChartView==='trends' && (
+              <>
+                <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
+                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2">
+                    <div>
+                      <h3 className="font-bold text-sm mb-1">Six-Month Activity Trend</h3>
+                      <p className="text-xs text-slate-400">Support logs versus appointments over the same six-month period.</p>
+                    </div>
+                    <div className="flex gap-3 text-[10px] font-bold text-slate-500">
+                      <span className="flex items-center gap-1.5"><i className="w-2.5 h-2.5 rounded-full bg-blue-600" />Logs</span>
+                      <span className="flex items-center gap-1.5"><i className="w-2.5 h-2.5 rounded-full bg-violet-500" />Appointments</span>
+                    </div>
+                  </div>
+                  <KpiLineChart theme={theme} data={kpi.logsByMonth.map(m=>({label:m.label,value:m.count}))} data2={kpi.apptsByMonth.map(m=>({label:m.label,value:m.count}))} />
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
+                    <h3 className="font-bold text-sm mb-1">Monthly Logs</h3>
+                    <p className="text-xs text-slate-400 mb-2">Detailed six-month support volume.</p>
+                    <KpiBarChart theme={theme} data={kpi.logsByMonth.map(m=>({label:m.label,value:m.count}))} />
+                  </div>
+                  <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
+                    <h3 className="font-bold text-sm mb-1">Monthly Appointments</h3>
+                    <p className="text-xs text-slate-400 mb-2">Detailed six-month appointment activity.</p>
+                    <KpiBarChart theme={theme} data={kpi.apptsByMonth.map(m=>({label:m.label,value:m.count,color:'#8b5cf6'}))} />
+                  </div>
+                </div>
+              </>
+            )}
+
+            {kpiChartView==='workload' && (
+              <>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
+                    <h3 className="font-bold text-sm mb-1">Appointment Mix</h3>
+                    <p className="text-xs text-slate-400 mb-3">How your scheduled activity is distributed by appointment type.</p>
+                    <KpiDonut
+                      theme={theme}
+                      total={kpi.byType.reduce((sum,x)=>sum+x.count,0)}
+                      data={kpi.byType.map(t=>({label:t.type,value:t.count,color:apptTypeStyle(t.type).dot}))}
+                    />
+                  </div>
+
+                  <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
+                    <h3 className="font-bold text-sm mb-1">Appointment Types</h3>
+                    <p className="text-xs text-slate-400 mb-3">Exact appointment counts by type.</p>
+                    <KpiBarChart theme={theme} horizontal data={kpi.byType.map(t=>({label:t.type,value:t.count,color:apptTypeStyle(t.type).dot}))} />
+                  </div>
+                </div>
+
+                <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
+                  <h3 className="font-bold text-sm mb-1">Workload Snapshot</h3>
+                  <p className="text-xs text-slate-400 mb-4">A combined view of the current operational workload.</p>
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                    <KpiMiniStat label="Open" value={kpi.open} sub="Logs requiring action" theme={theme} />
+                    <KpiMiniStat label="In progress" value={kpi.prog} sub="Currently being worked" theme={theme} />
+                    <KpiMiniStat label="Closed" value={kpi.closed} sub="Resolved logs" theme={theme} />
+                    <KpiMiniStat label="Tasks left" value={kpi.todoActive} sub="Outstanding to-dos" theme={theme} />
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Existing appointment summary retained */}
             <div className={`rounded-2xl border p-5 shadow backdrop-blur ${theme==='dark'? 'bg-slate-900/70 border-slate-800' : 'bg-white/90 border-blue-100'}`}>
-              <h3 className="font-bold text-sm mb-1">Appointments by Type</h3>
-              <p className="text- text-slate-400 mb-4">Breakdown of Meeting / Visit / Call / Personal / Other</p>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
+                <div>
+                  <h3 className="font-bold text-sm">Appointments by Type</h3>
+                  <p className="text-xs text-slate-400">Breakdown of Meeting / Visit / Call / Personal / Other</p>
+                </div>
+                <div className="text-xs font-bold text-slate-500">{kpi.apptThisMonth} this month</div>
+              </div>
               <div className="flex flex-wrap gap-2">
                 {kpi.byType.map(t=>{
                   const st = apptTypeStyle(t.type)
-                  return <div key={t.type} className="flex items-center gap-2 px-3 py-2 rounded-full border text-xs font-bold" style={{background:st.bg, color:st.color, borderColor:st.border}}><span className="w-2 h-2 rounded-full" style={{background:st.dot}}></span>{t.type}: {t.count}</div>
+                  return (
+                    <div key={t.type} className="flex items-center gap-2 px-3 py-2 rounded-full border text-xs font-bold" style={{background:st.bg, color:st.color, borderColor:st.border}}>
+                      <span className="w-2 h-2 rounded-full" style={{background:st.dot}}></span>
+                      {t.type}: {t.count}
+                    </div>
+                  )
                 })}
               </div>
             </div>
           </div>
         )}
+
       </main>
 
       <nav className="fixed bottom-0 inset-x-0 z-20 sm:hidden border-t backdrop-blur-xl bg-white/80 dark:bg-slate-900/80 border-blue-100 dark:border-slate-800 pb-[env(safe-area-inset-bottom)]">
