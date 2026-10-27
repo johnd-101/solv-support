@@ -2,8 +2,8 @@ import './globals.css'
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'SOLV CRM',
-  description: 'Solv Medical CRM',
+  title: 'Solv-Support',
+  description: 'Solv Medical Support Application',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
