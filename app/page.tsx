@@ -26,7 +26,6 @@ const getPracNumber = (obj: any): string => {
   return obj?.prac_number || obj?.practice_number || ''
 }
 
-// Reusable Toggle - MOBILE FIRST: larger tap targets
 function ViewToggle({ value, onChange, isDark }: { value: ViewMode, onChange: (v: ViewMode) => void, isDark: boolean }) {
   return (
     <div className={`flex p-1 rounded-full border ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-blue-100'}`}>
@@ -68,7 +67,6 @@ export default function Page() {
   const [logoError, setLogoError] = useState(false)
   const [readIds, setReadIds] = useState<Set<string>>(new Set())
 
-  // VIEW MODE STATES
   const [logsView, setLogsView] = useState<ViewMode>('grid')
   const [practicesView, setPracticesView] = useState<ViewMode>('grid')
 
@@ -136,16 +134,14 @@ export default function Page() {
   useEffect(() => { localStorage.setItem('solv_logs_view', logsView) }, [logsView])
   useEffect(() => { localStorage.setItem('solv_practices_view', practicesView) }, [practicesView])
 
-  // --- AUTO REFRESH EVERY 60 SECONDS ---
   useEffect(() => {
     if (!isLoggedIn) return
     
     const intervalId = setInterval(() => {
       console.log('Auto-refreshing data...')
-      fetchAll(true) // silent refresh
-    }, 60 * 1000) // 60 seconds
+      fetchAll(true)
+    }, 10 * 1000)
 
-    // Also refresh when user comes back to tab
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         fetchAll(true)
@@ -187,12 +183,10 @@ export default function Page() {
   useEffect(() => { if (!isLocked) return; const t = setInterval(() => setCountdown(c => { if (c <= 1) { setIsLocked(false); setFailedAttempts(0); return 0 } return c - 1 }), 1000); return () => clearInterval(t) }, [isLocked])
   useEffect(() => { if (toast) { const t = setTimeout(() => setToast(''), 2500); return () => clearTimeout(t) } }, [toast])
 
-  // FIX: Mark messages as read when opening messages tab
   useEffect(() => {
     if (tab === 'messages' && messages.length > 0) {
       const unread = messages.filter(m => !readIds.has(m.id))
       if (unread.length > 0) {
-        // delay slightly so user sees the bubble clear
         const t = setTimeout(() => {
           setReadIds(prev => {
             const next = new Set(prev)
@@ -404,15 +398,19 @@ export default function Page() {
               {activeUsers.length > 0 && <span className={textMuted}>• {activeUsers.length} online</span>}
             </div>
           </div>
-          <div className="ml-auto flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {lastRefresh && <div className={`hidden md:flex text- ${textMuted}`}>Updated {lastRefresh.toLocaleTimeString()}</div>}
-            <div className={`hidden sm:flex h-10 px-3 rounded-xl items-center gap-2 border text-xs font-bold ${bgChip}`}>
-              <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-sky-500 text-white flex items-center justify-center font-black">{(currentProfile?.username || 'U')[0].toUpperCase()}</div>
-              <span className="max-w- truncate">{currentProfile?.username}</span>
-            </div>
-            <button onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))} className={`w-10 h-10 rounded-xl flex items-center justify-center border transition-colors shrink-0 ${bgChip}`}>{theme === 'dark' ? '☀' : '🌙'}</button>
-            <button onClick={() => { localStorage.removeItem('isLoggedIn'); localStorage.removeItem('solv_username'); localStorage.removeItem('solv_profile_id'); setIsLoggedIn(false); setCurrentProfile(null) }} className={`w-10 h-10 rounded-xl border shrink-0 ${bgChip}`}>↪</button>
-          </div>
+         <div className="ml-auto flex items-center gap-1.5 sm:gap-2 shrink-0">
+        {lastRefresh && (
+    <span className={`hidden sm:flex text-xs font-bold ${textMuted}`}>
+      {lastRefresh.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}
+    </span>
+  )}
+  <div className={`hidden sm:flex h-10 px-3 rounded-xl items-center gap-2 border text-xs font-bold ${bgChip}`}>
+    <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-sky-500 text-white flex items-center justify-center font-black">{(currentProfile?.username || 'U')[0].toUpperCase()}</div>
+    <span className="max-w- truncate">{currentProfile?.username}</span>
+  </div>
+  <button onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))} className={`w-10 h-10 rounded-xl flex items-center justify-center border transition-colors shrink-0 ${bgChip}`}>{theme === 'dark' ? '☀' : '🌙'}</button>
+  <button onClick={() => { localStorage.removeItem('isLoggedIn'); localStorage.removeItem('solv_username'); localStorage.removeItem('solv_profile_id'); setIsLoggedIn(false); setCurrentProfile(null) }} className={`w-10 h-10 rounded-xl border shrink-0 ${bgChip}`}>↪</button>
+</div>
         </div>
         <div className="mx-auto w-full max-w-6xl px-3 sm:px-6 pb-3 pt-1 sm:pt-2">
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search practices, logs, product..." className={`w-full h-11 sm:h-11 rounded-xl pl-4 pr-4 text- sm:text-sm border focus:outline-none focus:ring-2 focus:ring-blue-500/30 ${bgInput}`} />
@@ -420,7 +418,6 @@ export default function Page() {
       </header>
 
       <main className="mx-auto w-full max-w-6xl p-3 sm:p-6">
-        {/* TABS - MOBILE FIRST: horizontal scroll, snap */}
         <div className={`flex gap-1.5 mb-4 sm:mb-5 p-1 rounded-full w-full sm:w-fit overflow-x-auto border shadow-sm backdrop-blur scrollbar-none snap-x snap-mandatory ${isDark ? 'bg-slate-900/70 border-slate-800' : 'bg-white/80 border-blue-100'}`}>
           {[
             { k: 'logs', l: 'Logs', i: '📋' },
@@ -436,7 +433,6 @@ export default function Page() {
               className={`relative h-10 sm:h-9 px-4 sm:px-4 rounded-full text- sm:text-sm font-bold flex items-center gap-1.5 transition-colors snap-start shrink-0 ${tab === t.k ? 'bg-gradient-to-r from-blue-600 to-sky-500 text-white shadow' : isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
             >
               <span>{t.i}</span> <span>{t.l}</span>
-              {/* FIXED UNREAD BUBBLE */}
               {t.badge !== undefined && t.badge > 0 && (
                 <span className={`ml-1 min-w- h-5 px-1.5 rounded-full text- font-black flex items-center justify-center leading-none
                   ${tab === t.k ? 'bg-white text-blue-600' : 'bg-red-500 text-white animate-pulse'}`}>
@@ -447,7 +443,6 @@ export default function Page() {
           ))}
         </div>
 
-        {/* ========== LOGS ========== */}
         {tab === 'logs' && (
           <div className="space-y-3 sm:space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -521,7 +516,6 @@ export default function Page() {
           </div>
         )}
 
-        {/* ========== PRACTICES ========== */}
         {tab === 'practices' && (
           <div className="space-y-3 sm:space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
