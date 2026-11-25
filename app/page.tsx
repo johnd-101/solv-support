@@ -20,9 +20,30 @@ type Tab = 'logs' | 'practices' | 'messages' | 'calendar' | 'kpi' | 'profile'
 type Profile = { id: string; username: string; password_hash: string; created_at?: string }
 type ActiveUser = { profile_id: string; username: string; online_at: string }
 type ViewMode = 'grid' | 'list'
-type DirectMessage = { id: string; sender_id: string; sender_name: string; receiver_id: string; receiver_name: string; content: string; created_at: string; conversation_id?: string }
+type DirectMessage = { 
+  id: string; 
+  sender_id: string; 
+  sender_name: string; 
+  receiver_id: string; 
+  receiver_name: string; 
+  content: string; 
+  created_at: string; 
+  conversation_id?: string;
+  is_read?: boolean;
+  read?: boolean;
+  read_at?: string | null;
+}
 
 const getPracNumber = (obj: any): string => { return obj?.prac_number || obj?.practice_number || '' }
+
+// helper to determine if DM is read from DB
+const isDMReadFromDB = (m: DirectMessage, fallbackReadIds?: Set<string>) => {
+  if (m.is_read === true) return true
+  if ((m as any).read === true) return true
+  if (m.read_at) return true
+  if (fallbackReadIds && fallbackReadIds.has(m.id)) return true
+  return false
+}
 
 function ViewToggle({ value, onChange, isDark }: { value: ViewMode, onChange: (v: ViewMode) => void, isDark: boolean }) {
   return (
@@ -33,7 +54,7 @@ function ViewToggle({ value, onChange, isDark }: { value: ViewMode, onChange: (v
   )
 }
 
-function MessageBoardInline({ messages, theme, setToast, currentProfile, activeUsers, dmTarget, setDmTarget, directMessages, setDirectMessages, fetchAll }: any) {
+function MessageBoardInline({ messages, theme, setToast, currentProfile, activeUsers, dmTarget, setDmTarget, directMessages, setDirectMessages, fetchAll, readIds, dmReadIds, setDmReadIds }: any) {
   const isDark = theme === 'dark'
   const [content, setContent] = useState('')
   const [sending, setSending] = useState(false)
@@ -58,8 +79,6 @@ function MessageBoardInline({ messages, theme, setToast, currentProfile, activeU
     if (!showSavedOnly) return conversation
     return conversation.filter((m: DirectMessage) => savedIds.has(m.id))
   }, [conversation, showSavedOnly, savedIds])
-
-  // NOTE: auto-scroll removed per request
 
   const isRecipientOnline = dmTarget ? activeUsers.some((u: ActiveUser) => u.profile_id === dmTarget.profile_id) : true
 
@@ -105,7 +124,6 @@ function MessageBoardInline({ messages, theme, setToast, currentProfile, activeU
         ) as any
         if (existing?.conversation_id) convoId = existing.conversation_id
         else {
-          // try create parent conversation to satisfy FK if table exists
           const newId = crypto.randomUUID()
           try { await supabase.from('conversations').insert({ id: newId } as any) } catch {}
           convoId = newId
@@ -116,21 +134,21 @@ function MessageBoardInline({ messages, theme, setToast, currentProfile, activeU
           sender_name: currentProfile.username,
           receiver_id: dmTarget.profile_id,
           receiver_name: dmTarget.username,
-          content: content.trim()
+          content: content.trim(),
+          is_read: false,
+          read: false,
         }
         let { error, data } = await supabase.from('direct_messages').insert(payload).select().single()
-        if (error && error.message.includes('conversation_id')) {
-          // retry without conversation_id if FK blocks
-          const { error: e2, data: d2 } = await supabase.from('direct_messages').insert({
-            sender_id: payload.sender_id,
-            sender_name: payload.sender_name,
-            receiver_id: payload.receiver_id,
-            receiver_name: payload.receiver_name,
-            content: payload.content
-          } as any).select().single()
-          if (e2) throw e2
-          data = d2
-        } else if (error) throw error
+        if (error) {
+          // fallback if is_read/read columns don't exist yet
+          const fallback: any = { ...payload }
+          delete fallback.is_read
+          delete fallback.read
+          if (error.message.includes('conversation_id')) delete fallback.conversation_id
+          const r = await supabase.from('direct_messages').insert(fallback).select().single()
+          if (r.error) throw r.error
+          data = r.data
+        }
         setDirectMessages((prev: DirectMessage[]) => [...prev, data as any])
         setContent('')
       } else {
@@ -167,13 +185,13 @@ function MessageBoardInline({ messages, theme, setToast, currentProfile, activeU
   return (
     <div className="space-y-3">
       <div className={`rounded-2xl border p-3 flex gap-2 overflow-x-auto scrollbar-none ${bgCard}`}>
-        <button onClick={() => setDmTarget(null)} className={`shrink-0 h-10 px-4 rounded-full text-xs font-bold border ${!dmTarget ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : bgCard}`}>💬 Board</button>
+        <button onClick={() => setDmTarget(null)} className={`shrink-0 h-10 px-4 rounded-full text-xs font-bold border ${!dmTarget ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : bgCard}`}>💬 Board {messages.filter((m:any)=>!readIds.has(m.id)).length>0 && <span className="ml-1 bg-red-500 text-white px-1.5 rounded-full">{messages.filter((m:any)=>!readIds.has(m.id)).length}</span>}</button>
         {activeUsers.filter((u: ActiveUser) => u.profile_id !== currentProfile?.id).map((u: ActiveUser) => {
           const isSelected = dmTarget?.profile_id === u.profile_id
-          const privateUnread = directMessages.filter((m: DirectMessage) => m.sender_id === u.profile_id && m.receiver_id === currentProfile?.id).length
+          const privateUnread = directMessages.filter((m: DirectMessage) => m.sender_id === u.profile_id && m.receiver_id === currentProfile?.id && !isDMReadFromDB(m, dmReadIds)).length
           return (
             <button key={u.profile_id} onClick={() => setDmTarget(u)} className={`shrink-0 h-10 px-3 rounded-full text-xs font-bold border flex items-center gap-2 ${isSelected ? 'bg-blue-600 text-white border-blue-600' : bgCard}`}>
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> {u.username} {privateUnread > 0 && <span className="bg-red-500 text-white px-1.5 py-0.5 rounded-full text-">{privateUnread}</span>}
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> {u.username} {privateUnread > 0 && <span className="bg-red-500 text-white px-1.5 py-0.5 rounded-full text- font-black">{privateUnread > 99 ? '99+' : privateUnread}</span>}
             </button>
           )
         })}
@@ -209,10 +227,11 @@ function MessageBoardInline({ messages, theme, setToast, currentProfile, activeU
           {!dmTarget ? (
             messages.map((m: any) => {
               const isOwn = m.profile_id === currentProfile?.id || m.username === currentProfile?.username || m.author === currentProfile?.username
+              const isUnread = !readIds.has(m.id)
               return (
-                <div key={m.id} className={`p-3 rounded-xl border group ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
+                <div key={m.id} className={`p-3 rounded-xl border group ${isUnread ? 'ring-1 ring-blue-200' : ''} ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
                   <div className="flex justify-between text-xs">
-                    <span className="font-bold">{m.profiles?.username || m.username || m.author || 'Unknown'}</span>
+                    <span className="font-bold flex items-center gap-2">{m.profiles?.username || m.username || m.author || 'Unknown'} {isUnread && <span className="w-2 h-2 bg-blue-500 rounded-full" />}</span>
                     <div className="flex items-center gap-2">
                       <span className="text-slate-400">{new Date(m.created_at).toLocaleTimeString()}</span>
                       {isOwn && <button onClick={() => deleteBoardMessage(m.id)} className="opacity-0 group-hover:opacity-100 transition-opacity text-red-500 hover:text-red-600 text-xs font-bold">Delete</button>}
@@ -227,6 +246,7 @@ function MessageBoardInline({ messages, theme, setToast, currentProfile, activeU
             filteredConversation.map((m: DirectMessage) => {
               const isMe = m.sender_id === currentProfile?.id
               const isSaved = savedIds.has(m.id)
+              const readState = isDMReadFromDB(m, dmReadIds)
               return (
                 <div key={m.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} group/dm`}>
                   <div className={`flex items-center gap-1.5 mb-1 text-xs font-bold ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
@@ -234,10 +254,10 @@ function MessageBoardInline({ messages, theme, setToast, currentProfile, activeU
                     <span className={isMe ? 'text-blue-600' : 'text-emerald-600'}>{isMe ? 'You' : m.sender_name}</span>
                     <span>→</span>
                     <span>{isMe ? m.receiver_name : 'You'}</span>
-                    <span className="font-normal">• {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    <span className="font-normal">• {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} {isMe && (readState ? '✓✓ read' : '✓ sent')}</span>
                     {isSaved && <span className="text-amber-500">★</span>}
                   </div>
-                  <div className={`max-w-[78%] px-3.5 py-2.5 rounded-2xl text-sm shadow-sm relative ${isMe ? 'bg-blue-600 text-white rounded-br-sm' : isDark ? 'bg-slate-800 border border-slate-700 rounded-bl-sm text-white' : 'bg-white border border-blue-100 rounded-bl-sm'}`}>
+                  <div className={`max-w-[78%] px-3.5 py-2.5 rounded-2xl text-sm shadow-sm relative ${isMe ? 'bg-blue-600 text-white rounded-br-sm' : isDark ? 'bg-slate-800 border border-slate-700 rounded-bl-sm text-white' : 'bg-white border border-blue-100 rounded-bl-sm'} ${!isMe && !readState ? 'ring-1 ring-blue-200' : ''}`}>
                     {m.content}
                     <div className="absolute -top-2 -right-2 hidden group-hover/dm:flex gap-1">
                       <button onClick={() => toggleSaveDM(m.id)} className={`w-6 h-6 rounded-full text-xs flex items-center justify-center shadow border ${isSaved ? 'bg-amber-400 text-white' : 'bg-white text-slate-600'}`}>{isSaved ? '★' : '☆'}</button>
@@ -289,6 +309,7 @@ export default function Page() {
   const [toast, setToast] = useState('')
   const [logoError, setLogoError] = useState(false)
   const [readIds, setReadIds] = useState<Set<string>>(new Set())
+  const [dmReadIds, setDmReadIds] = useState<Set<string>>(new Set())
 
   const [logsView, setLogsView] = useState<ViewMode>('grid')
   const [practicesView, setPracticesView] = useState<ViewMode>('grid')
@@ -316,6 +337,7 @@ export default function Page() {
 
   const [currentProfile, setCurrentProfile] = useState<Profile | null>(null)
   const [activeUsers, setActiveUsers] = useState<ActiveUser[]>([])
+  const idleTimerRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
     setMounted(true)
@@ -334,6 +356,7 @@ export default function Page() {
       setUsername(savedUser)
     }
     try { const raw = localStorage.getItem('solv_read_messages'); if (raw) setReadIds(new Set(JSON.parse(raw))) } catch {}
+    try { const raw2 = localStorage.getItem('solv_read_dms'); if (raw2) setDmReadIds(new Set(JSON.parse(raw2))) } catch {}
     fetchAll()
   }, [])
 
@@ -356,26 +379,28 @@ export default function Page() {
     return () => { clearInterval(intervalId); document.removeEventListener('visibilitychange', handleVisibility) }
   }, [isLoggedIn])
 
-  // Auto-logout after 5 minutes idle
+  // --- AUTO LOGOUT AFTER 5 MIN IDLE ---
+  const handleLogout = () => {
+    localStorage.removeItem('isLoggedIn')
+    localStorage.removeItem('solv_username')
+    localStorage.removeItem('solv_profile_id')
+    setIsLoggedIn(false)
+    setCurrentProfile(null)
+    setDmTarget(null)
+    setToast('Logged out due to 5 min inactivity')
+  }
+
   useEffect(() => {
     if (!isLoggedIn) return
-    let idleTimer: any
     const resetTimer = () => {
-      clearTimeout(idleTimer)
-      idleTimer = setTimeout(() => {
-        localStorage.removeItem('isLoggedIn')
-        localStorage.removeItem('solv_username')
-        localStorage.removeItem('solv_profile_id')
-        setIsLoggedIn(false)
-        setCurrentProfile(null)
-        setToast('Logged out due to 5 min inactivity')
-      }, 5 * 60 * 1000)
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current)
+      idleTimerRef.current = setTimeout(() => { handleLogout() }, 5 * 60 * 1000)
     }
-    const events = ['mousemove','mousedown','keydown','touchstart','scroll','click']
-    events.forEach(e => window.addEventListener(e, resetTimer))
+    const events: (keyof WindowEventMap)[] = ['mousemove','mousedown','keydown','touchstart','scroll','click']
+    events.forEach(e => window.addEventListener(e, resetTimer, { passive: true } as any))
     resetTimer()
     return () => {
-      clearTimeout(idleTimer)
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current)
       events.forEach(e => window.removeEventListener(e, resetTimer))
     }
   }, [isLoggedIn])
@@ -407,19 +432,60 @@ export default function Page() {
         const row = payload.new as DirectMessage
         setDirectMessages(prev => { if (prev.some(m => m.id === row.id)) return prev; return [...prev, row] })
       })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'direct_messages' }, (payload) => {
+        const row = payload.new as DirectMessage
+        setDirectMessages(prev => prev.map(m => m.id === row.id ? { ...m, ...row } : m))
+      })
       .subscribe()
     return () => { supabase.removeChannel(dmChannel) }
   }, [isLoggedIn, currentProfile])
 
   useEffect(() => { try { localStorage.setItem('solv_read_messages', JSON.stringify(Array.from(readIds))) } catch {} }, [readIds])
+  useEffect(() => { try { localStorage.setItem('solv_read_dms', JSON.stringify(Array.from(dmReadIds))) } catch {} }, [dmReadIds])
   useEffect(() => { if (!isLocked) return; const t = setInterval(() => setCountdown(c => { if (c <= 1) { setIsLocked(false); setFailedAttempts(0); return 0 } return c - 1 }), 1000); return () => clearInterval(t) }, [isLocked])
-  useEffect(() => { if (toast) { const t = setTimeout(() => setToast(''), 2500); return () => clearTimeout(t) } }, [toast])
+  useEffect(() => { if (toast) { const t = setTimeout(() => setToast(''), 3000); return () => clearTimeout(t) } }, [toast])
+
+  // Board read (localStorage)
   useEffect(() => {
-    if (tab === 'messages' && messages.length > 0) {
+    if (tab === 'messages' && !dmTarget && messages.length > 0) {
       const unread = messages.filter(m => !readIds.has(m.id))
-      if (unread.length > 0) { const t = setTimeout(() => { setReadIds(prev => { const next = new Set(prev); unread.forEach(m => next.add(m.id)); return next }) }, 800); return () => clearTimeout(t) }
+      if (unread.length > 0) { 
+        const t = setTimeout(() => { 
+          setReadIds(prev => { const next = new Set(prev); unread.forEach(m => next.add(m.id)); return next }) 
+        }, 800); 
+        return () => clearTimeout(t) 
+      }
     }
-  }, [tab, messages])
+  }, [tab, messages, dmTarget])
+
+  // DM read SYNCED TO direct_messages table
+  useEffect(() => {
+    if (tab !== 'messages' || !dmTarget || !currentProfile) return
+    const unreadDMs = directMessages.filter(m => m.receiver_id === currentProfile.id && m.sender_id === dmTarget.profile_id && !isDMReadFromDB(m, dmReadIds))
+    if (unreadDMs.length === 0) return
+
+    const markRead = async () => {
+      const ids = unreadDMs.map(m => m.id)
+      const now = new Date().toISOString()
+      
+      // 1. Optimistic local update + localStorage
+      setDmReadIds(prev => { const next = new Set(prev); ids.forEach(id => next.add(id)); return next })
+      setDirectMessages(prev => prev.map(m => ids.includes(m.id) ? { ...m, is_read: true, read: true, read_at: now } : m))
+
+      // 2. Sync to Supabase direct_messages table
+      try {
+        // Try with all possible columns
+        await supabase.from('direct_messages').update({ is_read: true, read: true, read_at: now } as any).in('id', ids)
+      } catch {}
+      // Fallbacks for schema variations
+      try { await supabase.from('direct_messages').update({ is_read: true } as any).in('id', ids) } catch {}
+      try { await supabase.from('direct_messages').update({ read: true } as any).in('id', ids) } catch {}
+      try { await supabase.from('direct_messages').update({ read_at: now } as any).in('id', ids) } catch {}
+    }
+
+    const t = setTimeout(markRead, 800)
+    return () => clearTimeout(t)
+  }, [tab, dmTarget, directMessages, currentProfile])
 
   async function fetchAll(silent = false) {
     if (!silent) setLoading(true)
@@ -481,11 +547,12 @@ export default function Page() {
     (p.practice_name + ' ' + getPracNumber(p) + ' ' + (p.contact_person || '') + ' ' + (p.phone || '') + ' ' + (p.email || '') + ' ' + (p.product || '')).toLowerCase().includes(search.toLowerCase())
   ), [practices, search])
 
+  // FIXED: notifier synced to direct_messages table
   const unreadMessages = useMemo(() => {
     const boardUnread = messages.filter((m) => !readIds.has(m.id)).length
-    const dmUnread = directMessages.filter(d => d.receiver_id === currentProfile?.id).length
+    const dmUnread = directMessages.filter(d => d.receiver_id === currentProfile?.id && !isDMReadFromDB(d, dmReadIds)).length
     return boardUnread + dmUnread
-  }, [messages, readIds, directMessages, currentProfile])
+  }, [messages, readIds, directMessages, dmReadIds, currentProfile])
 
   async function savePractice() {
     if (!pForm.practice_name) { setToast('Practice Name required'); return }
@@ -615,7 +682,7 @@ export default function Page() {
             {lastRefresh && (<span className={`hidden sm:flex text-xs font-bold ${textMuted}`}>{lastRefresh.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>)}
             <div className={`hidden sm:flex h-10 px-3 rounded-xl items-center gap-2 border text-xs font-bold ${bgChip}`}><div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-sky-500 text-white flex items-center justify-center font-black">{(currentProfile?.username || 'U')[0].toUpperCase()}</div><span className="truncate">{currentProfile?.username}</span></div>
             <button onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))} className={`w-10 h-10 rounded-xl flex items-center justify-center border ${bgChip}`}>{theme === 'dark' ? '☀' : '🌙'}</button>
-            <button onClick={() => { localStorage.removeItem('isLoggedIn'); localStorage.removeItem('solv_username'); localStorage.removeItem('solv_profile_id'); setIsLoggedIn(false); setCurrentProfile(null) }} className={`w-10 h-10 rounded-xl border ${bgChip}`}>↪</button>
+            <button onClick={handleLogout} className={`w-10 h-10 rounded-xl border ${bgChip}`}>↪</button>
           </div>
         </div>
         <div className="mx-auto w-full max-w-6xl px-3 sm:px-6 pb-3 pt-1 sm:pt-2">
@@ -635,7 +702,7 @@ export default function Page() {
           ].map((t) => (
             <button key={t.k} onClick={() => setTab(t.k as Tab)} className={`relative h-10 sm:h-9 px-4 rounded-full text-sm font-bold flex items-center gap-1.5 snap-start shrink-0 ${tab === t.k ? 'bg-gradient-to-r from-blue-600 to-sky-500 text-white shadow' : isDark ? 'text-slate-400' : 'text-slate-500'}`}>
               <span>{t.i}</span> <span>{t.l}</span>
-              {t.badge !== undefined && t.badge > 0 && (<span className={`ml-1 min-w-5 h-5 px-1.5 rounded-full text-xs font-black flex items-center justify-center ${tab === t.k ? 'bg-white text-blue-600' : 'bg-red-500 text-white animate-pulse'}`}>{t.badge > 99 ? '99+' : t.badge}</span>)}
+              {t.badge !== undefined && t.badge > 0 && (<span className={`ml-1 min-w-5 h-5 px-1.5 rounded-full text- font-black flex items-center justify-center ${tab === t.k ? 'bg-white text-blue-600' : 'bg-red-500 text-white animate-pulse'}`}>{t.badge > 99 ? '99+' : t.badge}</span>)}
             </button>
           ))}
         </div>
@@ -676,127 +743,14 @@ export default function Page() {
                 <button onClick={()=>{ setPForm(EMPTY_PRACTICE); setEditingPractice(null); setShowPractice(true) }} className="h-10 sm:h-9 px-4 rounded-full bg-gradient-to-r from-blue-600 to-sky-500 text-white text-sm font-bold shadow">+ New Practice</button>
               </div>
             </div>
-
-            {loading ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">{[1,2,3,4,5,6].map(i=><div key={i} className={`h-32 rounded-2xl animate-pulse ${isDark?'bg-slate-800':'bg-white/60'}`} />)}</div>
-            ) : filteredPractices.length === 0 ? (
-              <div className={`rounded-2xl border border-dashed p-10 text-center ${isDark?'border-slate-700 bg-slate-900/50':'bg-white/70 border-blue-200'}`}>
-                <div className="text-3xl">🏥</div><p className={`mt-2 text-sm font-bold ${textMuted}`}>No practices found</p>
-                <button onClick={()=>{ setPForm(EMPTY_PRACTICE); setEditingPractice(null); setShowPractice(true) }} className="mt-3 text-sm font-bold text-blue-600">Create first practice</button>
-              </div>
-            ) : practicesView === 'grid' ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-                {filteredPractices.map(p=> {
-                  const logCount = logs.filter(l => l.practice_id === p.id || l.practice_name === p.practice_name).length
-                  return (
-                  <div key={p.id} onClick={()=>setShowDetailPractice(p)} className={cardBase + ' cursor-pointer'}>
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <h3 className="font-bold text-sm truncate pr-2 leading-tight">{p.practice_name}</h3>
-                      <span className={`text-xs font-mono px-2 py-0.5 rounded-full border shrink-0 ${bgSubtle}`}>{getPracNumber(p) || '—'}</span>
-                    </div>
-                    <div className={`space-y-1.5 text-xs ${textMuted}`}>
-                      {p.contact_person && <div className="flex items-center gap-1.5 truncate">👤 {p.contact_person}</div>}
-                      {(p.phone || (p as any).mobile) && <div className="flex items-center gap-1.5 truncate">📞 {p.phone || (p as any).mobile}</div>}
-                      {p.email && <div className="flex items-center gap-1.5 truncate">✉ {p.email}</div>}
-                      <div className="flex items-center gap-2 pt-1">
-                        <span className={`px-2 py-0.5 rounded-full border text- font-bold ${bgSubtle}`}>{p.product || 'Solv Optics'}</span>
-                        <span className={`ml-auto text-xs ${textSubtle}`}>{logCount} logs</span>
-                      </div>
-                    </div>
-                  </div>
-                )})}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {filteredPractices.map(p=> (
-                  <div key={p.id} onClick={()=>setShowDetailPractice(p)} className={listRowBase}>
-                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-600 to-sky-500 text-white flex items-center justify-center font-black text-xs shrink-0">{p.practice_name[0]?.toUpperCase()}</div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm truncate">{p.practice_name}</span>
-                        <span className={`text-xs font-mono px-1.5 py-0.5 rounded border ${bgSubtle}`}>{getPracNumber(p) || '—'}</span>
-                      </div>
-                      <p className={`text-xs truncate ${textMuted}`}>{p.contact_person || ''} {p.contact_person && (p.phone || (p as any).mobile) ? '•' : ''} {p.phone || (p as any).mobile || ''} {p.email ? `• ${p.email}` : ''}</p>
-                    </div>
-                    <span className={`text-xs font-bold shrink-0 ${isDark ? 'text-sky-400' : 'text-blue-600'}`}>→</span>
-                  </div>
-                ))}
-              </div>
-            )}
+            {loading ? (<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">{[1,2,3,4,5,6].map(i=><div key={i} className={`h-32 rounded-2xl animate-pulse ${isDark?'bg-slate-800':'bg-white/60'}`} />)}</div>) : filteredPractices.length === 0 ? (<div className={`rounded-2xl border border-dashed p-10 text-center ${isDark?'border-slate-700 bg-slate-900/50':'bg-white/70 border-blue-200'}`}><div className="text-3xl">🏥</div><p className={`mt-2 text-sm font-bold ${textMuted}`}>No practices found</p><button onClick={()=>{ setPForm(EMPTY_PRACTICE); setEditingPractice(null); setShowPractice(true) }} className="mt-3 text-sm font-bold text-blue-600">Create first practice</button></div>) : practicesView === 'grid' ? (<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">{filteredPractices.map(p=> { const logCount = logs.filter(l => l.practice_id === p.id || l.practice_name === p.practice_name).length; return (<div key={p.id} onClick={()=>setShowDetailPractice(p)} className={cardBase + ' cursor-pointer'}><div className="flex items-start justify-between gap-2 mb-2"><h3 className="font-bold text-sm truncate pr-2 leading-tight">{p.practice_name}</h3><span className={`text-xs font-mono px-2 py-0.5 rounded-full border shrink-0 ${bgSubtle}`}>{getPracNumber(p) || '—'}</span></div><div className={`space-y-1.5 text-xs ${textMuted}`}>{p.contact_person && <div className="flex items-center gap-1.5 truncate">👤 {p.contact_person}</div>}{(p.phone || (p as any).mobile) && <div className="flex items-center gap-1.5 truncate">📞 {p.phone || (p as any).mobile}</div>}{p.email && <div className="flex items-center gap-1.5 truncate">✉ {p.email}</div>}<div className="flex items-center gap-2 pt-1"><span className={`px-2 py-0.5 rounded-full border text- font-bold ${bgSubtle}`}>{p.product || 'Solv Optics'}</span><span className={`ml-auto text-xs ${textSubtle}`}>{logCount} logs</span></div></div></div>)})}</div>) : (<div className="space-y-2">{filteredPractices.map(p=> (<div key={p.id} onClick={()=>setShowDetailPractice(p)} className={listRowBase}><div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-600 to-sky-500 text-white flex items-center justify-center font-black text-xs shrink-0">{p.practice_name[0]?.toUpperCase()}</div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="font-bold text-sm truncate">{p.practice_name}</span><span className={`text-xs font-mono px-1.5 py-0.5 rounded border ${bgSubtle}`}>{getPracNumber(p) || '—'}</span></div><p className={`text-xs truncate ${textMuted}`}>{p.contact_person || ''} {p.contact_person && (p.phone || (p as any).mobile) ? '•' : ''} {p.phone || (p as any).mobile || ''} {p.email ? `• ${p.email}` : ''}</p></div><span className={`text-xs font-bold shrink-0 ${isDark ? 'text-sky-400' : 'text-blue-600'}`}>→</span></div>))}</div>)}
           </div>
         )}
 
-        {tab === 'messages' && <MessageBoardInline messages={messages} theme={theme} setToast={setToast} currentProfile={currentProfile} activeUsers={activeUsers} dmTarget={dmTarget} setDmTarget={setDmTarget} directMessages={directMessages} setDirectMessages={setDirectMessages} fetchAll={fetchAll} />}
-        
-        {tab === 'calendar' && (
-          <div className="space-y-4">
-            <CalendarGrid calendarDate={calendarDate} setCalendarDate={setCalendarDate} selectedCalDate={selectedCalDate} setSelectedCalDate={setSelectedCalDate} appointments={appointments} theme={theme} onSelectDate={() => {}} onSelectAppt={(a) => setShowDetailAppt(a)} onNewAppt={(dateStr) => { setAForm({ ...EMPTY_APPT, date: dateStr }); setEditingAppt(null); setShowAppt(true) }} />
-            {selectedCalDate && <SelectedDayPanel date={selectedCalDate} appointments={appointments.filter((a) => normalizeDateStr(a.date) === selectedCalDate).sort((a,b)=>a.start_time.localeCompare(b.start_time))} theme={theme} onClose={() => setSelectedCalDate(null)} onSelect={(a) => setShowDetailAppt(a)} />}
-            <UpcomingAppointments appointments={appointments} theme={theme} onSelect={(a) => setShowDetailAppt(a)} />
-          </div>
-        )}
+        {tab === 'messages' && <MessageBoardInline messages={messages} theme={theme} setToast={setToast} currentProfile={currentProfile} activeUsers={activeUsers} dmTarget={dmTarget} setDmTarget={setDmTarget} directMessages={directMessages} setDirectMessages={setDirectMessages} fetchAll={fetchAll} readIds={readIds} dmReadIds={dmReadIds} setDmReadIds={setDmReadIds} />}
+        {tab === 'calendar' && (<div className="space-y-4"><CalendarGrid calendarDate={calendarDate} setCalendarDate={setCalendarDate} selectedCalDate={selectedCalDate} setSelectedCalDate={setSelectedCalDate} appointments={appointments} theme={theme} onSelectDate={() => {}} onSelectAppt={(a) => setShowDetailAppt(a)} onNewAppt={(dateStr) => { setAForm({ ...EMPTY_APPT, date: dateStr }); setEditingAppt(null); setShowAppt(true) }} />{selectedCalDate && <SelectedDayPanel date={selectedCalDate} appointments={appointments.filter((a) => normalizeDateStr(a.date) === selectedCalDate).sort((a,b)=>a.start_time.localeCompare(b.start_time))} theme={theme} onClose={() => setSelectedCalDate(null)} onSelect={(a) => setShowDetailAppt(a)} />}<UpcomingAppointments appointments={appointments} theme={theme} onSelect={(a) => setShowDetailAppt(a)} /></div>)}
         {tab === 'kpi' && <KpiDashboard practices={practices} logs={logs} appointments={appointments} messages={messages} unreadMessages={unreadMessages} theme={theme} />}
-
-        {tab === 'profile' && (
-          <div className="space-y-4 sm:space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
-              <div className={`rounded-2xl border p-4 sm:p-5 shadow ${bgCard}`}>
-                <h3 className={`font-bold text-xs uppercase tracking-widest mb-3 flex items-center gap-2 ${textMuted}`}><span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> You</h3>
-                <div className="flex items-center gap-3"><div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-600 to-sky-500 text-white flex items-center justify-center font-black text-lg">{(currentProfile?.username || '?')[0].toUpperCase()}</div><div><div className="font-bold text-sm">{currentProfile?.username}</div><div className={`text-xs ${textMuted}`}>ID: {currentProfile?.id.slice(0,8)}... (private)</div></div></div>
-              </div>
-              <div className={`rounded-2xl border p-4 sm:p-5 shadow ${bgCard}`}>
-                <h3 className={`font-bold text-xs uppercase tracking-widest mb-2 ${textMuted}`}>Active Sessions</h3><div className="text-3xl font-black">{activeUsers.length}</div><div className={`text-xs ${textMuted}`}>{activeUsers.filter(u => u.profile_id !== currentProfile?.id).length} other online</div>
-              </div>
-              <div className={`rounded-2xl border p-4 sm:p-5 shadow ${bgCard}`}>
-                <h4 className={`font-bold text-xs uppercase tracking-widest mb-3 ${textMuted}`}>Other Online - Click to DM (Private by ID)</h4>
-                <div className="space-y-2 max-h-32 overflow-y-auto">
-                  {activeUsers.filter(u => u.profile_id !== currentProfile?.id).map(u => (
-                    <div key={u.profile_id} className={`p-2.5 rounded-xl border flex justify-between items-center text-sm ${bgSubtle}`}>
-                      <div className="flex items-center gap-2 truncate"><span className="w-2 h-2 rounded-full bg-emerald-500" />{u.username}</div>
-                      <button onClick={() => { setDmTarget(u); setTab('messages') }} className="h-7 px-3 rounded-full bg-blue-600 text-white text-xs font-bold">DM Private</button>
-                    </div>
-                  ))}
-                  {activeUsers.filter(u => u.profile_id !== currentProfile?.id).length === 0 && <div className={`text-xs p-2 rounded-xl text-center ${bgSubtle} ${textMuted}`}>No other users online</div>}
-                </div>
-              </div>
-            </div>
-
-            <div className={`rounded-2xl border p-4 sm:p-5 shadow ${bgCard}`}>
-              <h3 className="font-black text-sm mb-4">{editingProfile ? `Edit: ${editingProfile.username}` : '+ New Profile'}</h3>
-              <div className="flex flex-col sm:flex-row gap-3">
-                <input value={pUsername} onChange={e => setPUsername(e.target.value)} placeholder="Username" className={`flex-1 h-11 rounded-xl border px-4 text-sm ${bgInput}`} />
-                <input value={pPassword} onChange={e => setPPassword(e.target.value)} placeholder="Password" type="text" className={`flex-1 h-11 rounded-xl border px-4 text-sm ${bgInput}`} />
-                <div className="flex gap-2">
-                  <button onClick={saveProfile} className="h-11 px-6 rounded-xl bg-slate-900 text-white dark:bg-white dark:text-slate-900 text-sm font-bold">{editingProfile ? 'Update' : 'Create'}</button>
-                  {editingProfile && <button onClick={()=>{ setEditingProfile(null); setPUsername(''); setPPassword(''); }} className={`h-11 px-4 rounded-xl border text-sm font-bold ${bgChip}`}>Cancel</button>}
-                </div>
-              </div>
-            </div>
-
-            <div className={`rounded-2xl border shadow overflow-hidden ${bgCard}`}>
-              <div className={`p-4 border-b font-bold text-sm flex justify-between ${isDark ? 'border-slate-800' : 'border-blue-100'}`}>
-                <span>All Profiles ({profiles.length})</span>
-                <button onClick={()=>fetchAll(true)} className={`text-xs ${textMuted}`}>↻ Refresh</button>
-              </div>
-              <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                {profiles.map(pr => (
-                  <div key={pr.id} className="p-3 sm:p-4 flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-xs font-black shrink-0">{pr.username[0]?.toUpperCase()}</div>
-                    <div className="min-w-0 flex-1">
-                      <div className="font-bold text-sm truncate flex items-center gap-2">{pr.username} {pr.id === currentProfile?.id && <span className="text- px-1.5 py-0.5 rounded-full bg-blue-600 text-white">YOU</span>}</div>
-                      <div className={`text-xs truncate ${textMuted}`}>{pr.id} • {pr.created_at ? new Date(pr.created_at).toLocaleDateString() : ''}</div>
-                    </div>
-                    <div className="flex gap-1.5 shrink-0">
-                      <button onClick={()=>{ setEditingProfile(pr); setPUsername(pr.username); setPPassword(pr.password_hash); }} className={`h-8 px-3 rounded-full border text-xs font-bold ${bgChip}`}>Edit</button>
-                      <button disabled={pr.id === currentProfile?.id} onClick={()=>{ if(confirm(`Delete ${pr.username}?`)) deleteProfile(pr.id) }} className="h-8 px-3 rounded-full bg-red-50 text-red-600 border border-red-100 text-xs font-bold disabled:opacity-40">Delete</button>
-                    </div>
-                  </div>
-                ))}
-                {profiles.length === 0 && <div className={`p-8 text-center text-sm ${textMuted}`}>No profiles yet. Create one above.</div>}
-              </div>
-            </div>
-          </div>
-        )}
+        {tab === 'profile' && (<div className="space-y-4 sm:space-y-6"><div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4"><div className={`rounded-2xl border p-4 sm:p-5 shadow ${bgCard}`}><h3 className={`font-bold text-xs uppercase tracking-widest mb-3 flex items-center gap-2 ${textMuted}`}><span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> You</h3><div className="flex items-center gap-3"><div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-600 to-sky-500 text-white flex items-center justify-center font-black text-lg">{(currentProfile?.username || '?')[0].toUpperCase()}</div><div><div className="font-bold text-sm">{currentProfile?.username}</div><div className={`text-xs ${textMuted}`}>ID: {currentProfile?.id.slice(0,8)}... (private)</div></div></div></div><div className={`rounded-2xl border p-4 sm:p-5 shadow ${bgCard}`}><h3 className={`font-bold text-xs uppercase tracking-widest mb-2 ${textMuted}`}>Active Sessions</h3><div className="text-3xl font-black">{activeUsers.length}</div><div className={`text-xs ${textMuted}`}>{activeUsers.filter(u => u.profile_id !== currentProfile?.id).length} other online</div></div><div className={`rounded-2xl border p-4 sm:p-5 shadow ${bgCard}`}><h4 className={`font-bold text-xs uppercase tracking-widest mb-3 ${textMuted}`}>Other Online - Click to DM</h4><div className="space-y-2 max-h-32 overflow-y-auto">{activeUsers.filter(u => u.profile_id !== currentProfile?.id).map(u => (<div key={u.profile_id} className={`p-2.5 rounded-xl border flex justify-between items-center text-sm ${bgSubtle}`}><div className="flex items-center gap-2 truncate"><span className="w-2 h-2 rounded-full bg-emerald-500" />{u.username}</div><button onClick={() => { setDmTarget(u); setTab('messages') }} className="h-7 px-3 rounded-full bg-blue-600 text-white text-xs font-bold">DM Private</button></div>))}{activeUsers.filter(u => u.profile_id !== currentProfile?.id).length === 0 && <div className={`text-xs p-2 rounded-xl text-center ${bgSubtle} ${textMuted}`}>No other users online</div>}</div></div></div><div className={`rounded-2xl border p-4 sm:p-5 shadow ${bgCard}`}><h3 className="font-black text-sm mb-4">{editingProfile ? `Edit: ${editingProfile.username}` : '+ New Profile'}</h3><div className="flex flex-col sm:flex-row gap-3"><input value={pUsername} onChange={e => setPUsername(e.target.value)} placeholder="Username" className={`flex-1 h-11 rounded-xl border px-4 text-sm ${bgInput}`} /><input value={pPassword} onChange={e => setPPassword(e.target.value)} placeholder="Password" type="text" className={`flex-1 h-11 rounded-xl border px-4 text-sm ${bgInput}`} /><div className="flex gap-2"><button onClick={saveProfile} className="h-11 px-6 rounded-xl bg-slate-900 text-white dark:bg-white dark:text-slate-900 text-sm font-bold">{editingProfile ? 'Update' : 'Create'}</button>{editingProfile && <button onClick={()=>{ setEditingProfile(null); setPUsername(''); setPPassword(''); }} className={`h-11 px-4 rounded-xl border text-sm font-bold ${bgChip}`}>Cancel</button>}</div></div></div><div className={`rounded-2xl border shadow overflow-hidden ${bgCard}`}><div className={`p-4 border-b font-bold text-sm flex justify-between ${isDark ? 'border-slate-800' : 'border-blue-100'}`}><span>All Profiles ({profiles.length})</span><button onClick={()=>fetchAll(true)} className={`text-xs ${textMuted}`}>↻ Refresh</button></div><div className="divide-y divide-slate-100 dark:divide-slate-800">{profiles.map(pr => (<div key={pr.id} className="p-3 sm:p-4 flex items-center gap-3"><div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-xs font-black shrink-0">{pr.username[0]?.toUpperCase()}</div><div className="min-w-0 flex-1"><div className="font-bold text-sm truncate flex items-center gap-2">{pr.username} {pr.id === currentProfile?.id && <span className="text- px-1.5 py-0.5 rounded-full bg-blue-600 text-white">YOU</span>}</div><div className={`text-xs truncate ${textMuted}`}>{pr.id} • {pr.created_at ? new Date(pr.created_at).toLocaleDateString() : ''}</div></div><div className="flex gap-1.5 shrink-0"><button onClick={()=>{ setEditingProfile(pr); setPUsername(pr.username); setPPassword(pr.password_hash); }} className={`h-8 px-3 rounded-full border text-xs font-bold ${bgChip}`}>Edit</button><button disabled={pr.id === currentProfile?.id} onClick={()=>{ if(confirm(`Delete ${pr.username}?`)) deleteProfile(pr.id) }} className="h-8 px-3 rounded-full bg-red-50 text-red-600 border border-red-100 text-xs font-bold disabled:opacity-40">Delete</button></div></div>))}{profiles.length === 0 && <div className={`p-8 text-center text-sm ${textMuted}`}>No profiles yet. Create one above.</div>}</div></div></div>)}
       </main>
 
       <PracticeDetail practice={showDetailPractice} onClose={() => setShowDetailPractice(null)} theme={theme} onEdit={(p) => { setEditingPractice(p); setPForm(p); setShowPractice(true) }} onDelete={async (p) => { if (!confirm(`Delete "${p.practice_name}"?`)) return; const ok = await deletePractice(p.id); if (ok) setShowDetailPractice(null) }} />
